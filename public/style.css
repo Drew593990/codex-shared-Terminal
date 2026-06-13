@@ -189,7 +189,7 @@ button:hover {
 
 .team-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(60px, 1fr) minmax(72px, auto) auto minmax(60px, 1fr);
+  grid-template-rows: auto auto minmax(52px, 0.7fr) minmax(72px, auto) auto minmax(60px, 0.8fr) minmax(48px, 0.5fr) minmax(48px, 0.6fr);
   gap: 8px;
   min-width: 0;
   min-height: 0;
@@ -282,6 +282,8 @@ button:hover {
 }
 
 .team-roster,
+.team-tasks,
+.team-trace,
 .team-messages {
   display: flex;
   flex-direction: column;
@@ -291,6 +293,8 @@ button:hover {
 }
 
 .team-agent,
+.team-task,
+.team-trace-event,
 .team-message {
   display: grid;
   gap: 4px;
@@ -305,7 +309,9 @@ button:hover {
 }
 
 .team-agent-main,
-.team-message-main {
+.team-message-main,
+.team-task-main,
+.team-trace-main {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -314,7 +320,9 @@ button:hover {
 }
 
 .team-agent-id,
-.team-message-route {
+.team-message-route,
+.team-task-title,
+.team-trace-type {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -323,10 +331,18 @@ button:hover {
 }
 
 .team-agent-meta,
-.team-message-body {
+.team-message-body,
+.team-task-meta,
+.team-trace-data {
   color: #aeb7c2;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.team-task button {
+  width: fit-content;
+  height: 26px;
+  justify-self: start;
 }
 
 .team-agent-role {

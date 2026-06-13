@@ -1,7 +1,11 @@
 const assert = require('node:assert/strict');
+const { mkdtemp, rm } = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
 const { createWebServer } = require('../server/web-server');
+const { TeamStore } = require('../server/team-store');
 
 function createFakeManager() {
   const systemMessages = [];
@@ -527,5 +531,64 @@ test('team APIs expose roster lifecycle, @team tasks, and messages', async () =>
     assert.equal(messageBody.message.to, '@leader');
   } finally {
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('team dispatch API runs the assigned direct agent and exposes trace', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => 'task-dispatch-1',
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-dispatch-${++index}`;
+    })()
+  });
+  const manager = createFakeManager();
+  const agentAdapter = createFakeAgentAdapter();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await teamStore.createTask({
+      title: 'Dispatch through echo',
+      prompt: '@leader produce a checked answer',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    const dispatchResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+    const dispatchBody = await dispatchResponse.json();
+    assert.equal(dispatchResponse.status, 200);
+    assert.equal(dispatchBody.task.status, 'completed');
+    assert.equal(dispatchBody.task.result, 'reply:@leader produce a checked answer');
+    assert.equal(agentAdapter.calls[0].agent, 'echo');
+    assert.equal(agentAdapter.calls[0].input.prompt, '@leader produce a checked answer');
+    assert.match(manager.systemMessages.at(-1).data, /\[team completed\] task-dispatch-1/);
+
+    const traceResponse = await fetch(`${base}/api/team/trace/${task.taskId}`);
+    const traceBody = await traceResponse.json();
+    assert.equal(traceResponse.status, 200);
+    assert.deepEqual(traceBody.trace.events.map((event) => event.type).slice(-2), [
+      'task.running',
+      'task.completed'
+    ]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
   }
 });

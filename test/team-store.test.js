@@ -113,3 +113,47 @@ test('TeamStore supports direct mention messages and leader reassignment', async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('TeamStore records task lifecycle events for dispatch tracing', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    const store = new TeamStore(root, {
+      now: createClock(),
+      taskIdFactory: () => 'task-1',
+      messageIdFactory: () => 'message-1'
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const queued = await store.createTask({
+      title: 'Dispatch smoke',
+      prompt: '@leader run this task',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    const running = await store.startTask(queued.taskId, {
+      agentId: 'echo1',
+      mode: 'direct',
+      turnId: 'turn-1'
+    });
+    const completed = await store.completeTask(queued.taskId, {
+      agentId: 'echo1',
+      result: 'reply from echo',
+      turnId: 'turn-1'
+    });
+    const trace = await store.trace(queued.taskId);
+
+    assert.equal(running.status, 'running');
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.result, 'reply from echo');
+    assert.equal((await store.listRoster()).find((agent) => agent.agentId === 'echo1').status, 'idle');
+    assert.deepEqual(trace.events.map((event) => event.type), [
+      'task.created',
+      'message.sent',
+      'task.running',
+      'task.completed'
+    ]);
+    assert.equal(trace.task.taskId, 'task-1');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -74,6 +74,20 @@ class TeamStore {
     return path.join(this.rootDir, `${name}.jsonl`);
   }
 
+  async appendEvent(input) {
+    const event = {
+      eventId: input.eventId || defaultId('event'),
+      type: input.type,
+      taskId: input.taskId || null,
+      agentId: input.agentId || null,
+      messageId: input.messageId || null,
+      data: input.data || {},
+      createdAt: input.createdAt || this.now()
+    };
+    await appendJsonLine(this.file('events'), event);
+    return event;
+  }
+
   async listAgentProfiles() {
     const builtIns = Object.entries(this.profiles).map(([profileId, profile]) => publicProfile(profileId, profile));
     const custom = latestBy(await readJsonLines(this.file('agent-profiles')), 'profileId');
@@ -235,6 +249,12 @@ class TeamStore {
       updatedAt: now
     };
     await appendJsonLine(this.file('tasks'), task);
+    await this.appendEvent({
+      type: 'task.created',
+      taskId: task.taskId,
+      agentId: task.leaderAgentId,
+      data: { assignedTo: task.assignedTo, mentions: task.mentions }
+    });
     const messageTarget = task.assignedTo === '@team' ? task.leaderAgentId : task.assignedTo;
     if (messageTarget) {
       await this.sendMessage({
@@ -272,7 +292,134 @@ class TeamStore {
       replyTo: input.replyTo || null
     };
     await appendJsonLine(this.file('messages'), message);
+    await this.appendEvent({
+      type: 'message.sent',
+      taskId: message.taskId,
+      agentId: message.to,
+      messageId: message.messageId,
+      data: { from: message.from, to: message.to, mentions: message.mentions }
+    });
     return message;
+  }
+
+  async updateRosterAgent(agentId, updates = {}) {
+    const safeAgentId = safeId(agentId, 'agentId');
+    const roster = await this.listRoster();
+    const previous = roster.find((agent) => agent.agentId === safeAgentId);
+    if (!previous) {
+      throw new Error(`Unknown agent: ${safeAgentId}`);
+    }
+    const updated = {
+      ...previous,
+      ...updates,
+      agentId: safeAgentId,
+      lastActivityAt: this.now()
+    };
+    await appendJsonLine(this.file('roster'), updated);
+    return updated;
+  }
+
+  async updateTask(taskId, updates = {}) {
+    const safeTaskId = safeId(taskId, 'taskId');
+    const previous = await this.getTask(safeTaskId);
+    if (!previous) {
+      throw new Error(`Unknown task: ${safeTaskId}`);
+    }
+    const updated = {
+      ...previous,
+      ...updates,
+      taskId: safeTaskId,
+      updatedAt: this.now()
+    };
+    await appendJsonLine(this.file('tasks'), updated);
+    return updated;
+  }
+
+  async startTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    const agentId = safeId(input.agentId || task.leaderAgentId, 'agentId');
+    const startedAt = this.now();
+    const attempt = {
+      agentId,
+      mode: input.mode || 'direct',
+      turnId: input.turnId || null,
+      startedAt,
+      completedAt: null,
+      status: 'running'
+    };
+    const updated = await this.updateTask(task.taskId, {
+      status: 'running',
+      attempts: [...(task.attempts || []), attempt],
+      error: null
+    });
+    await this.updateRosterAgent(agentId, { status: 'running', activeTaskId: task.taskId });
+    await this.appendEvent({
+      type: 'task.running',
+      taskId: task.taskId,
+      agentId,
+      data: { mode: attempt.mode, turnId: attempt.turnId }
+    });
+    return updated;
+  }
+
+  async completeTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    const agentId = safeId(input.agentId || task.leaderAgentId, 'agentId');
+    const completedAt = this.now();
+    const attempts = (task.attempts || []).map((attempt, index, values) => {
+      if (index !== values.length - 1 || attempt.agentId !== agentId) {
+        return attempt;
+      }
+      return {
+        ...attempt,
+        turnId: input.turnId || attempt.turnId || null,
+        completedAt,
+        status: 'completed'
+      };
+    });
+    const updated = await this.updateTask(task.taskId, {
+      status: 'completed',
+      result: String(input.result || ''),
+      reviewedBy: input.reviewedBy || task.leaderAgentId || agentId,
+      reviewStatus: input.reviewStatus || 'checked',
+      attempts
+    });
+    await this.updateRosterAgent(agentId, { status: 'idle', activeTaskId: null });
+    await this.appendEvent({
+      type: 'task.completed',
+      taskId: task.taskId,
+      agentId,
+      data: { turnId: input.turnId || null, result: updated.result }
+    });
+    return updated;
+  }
+
+  async failTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    const agentId = input.agentId || task.leaderAgentId;
+    const updated = await this.updateTask(task.taskId, {
+      status: 'failed',
+      error: String(input.error || 'task failed')
+    });
+    if (agentId) {
+      await this.updateRosterAgent(agentId, { status: 'idle', activeTaskId: null });
+    }
+    await this.appendEvent({
+      type: 'task.failed',
+      taskId: task.taskId,
+      agentId,
+      data: { error: updated.error }
+    });
+    return updated;
   }
 
   async listMessages(filter = {}) {
@@ -317,6 +464,19 @@ class TeamStore {
       activeTasks: (await this.listTasks()).filter((task) => !['completed', 'failed', 'cancelled'].includes(task.status)),
       recentMessages: (await this.listMessages()).slice(-20),
       notes: latestBy(await readJsonLines(this.file('context-notes')), 'noteId')
+    };
+  }
+
+  async trace(id) {
+    const safeTraceId = safeId(id, 'trace id');
+    const task = await this.getTask(safeTraceId);
+    const events = (await readJsonLines(this.file('events')))
+      .filter((event) => event.taskId === safeTraceId || event.messageId === safeTraceId)
+      .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
+    return {
+      id: safeTraceId,
+      task,
+      events
     };
   }
 }

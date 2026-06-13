@@ -108,6 +108,21 @@ async function publishTeamTaskNotice(sessionManager, sessionName, task) {
   await sessionManager.publishSystem(sessionName || 'main', formatTeamTaskNotice(task));
 }
 
+async function resolveDispatchAgent(teamStore, task) {
+  const roster = await teamStore.listRoster();
+  let agentId = task.assignedTo;
+  if (agentId === '@team' || agentId === '@leader') {
+    agentId = task.leaderAgentId || (await teamStore.leaderAgent())?.agentId;
+  } else if (typeof agentId === 'string' && agentId.startsWith('@')) {
+    agentId = agentId.slice(1);
+  }
+  const agent = roster.find((item) => item.agentId === agentId && item.status !== 'removed');
+  if (!agent) {
+    throw new Error(`Unknown dispatch agent: ${agentId}`);
+  }
+  return agent;
+}
+
 function createWebServer({ sessionManager, config, conversationStore, teamStore, agentAdapter }) {
   const app = express();
   const server = http.createServer(app);
@@ -226,6 +241,53 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     }
   });
 
+  app.post('/api/team/tasks/:taskId/dispatch', requireToken(config.token), async (request, response, next) => {
+    let runningTask = null;
+    let dispatchAgent = null;
+    try {
+      requireTeamStore(teamStore);
+      requireAgentAdapter(agentAdapter);
+      const task = await teamStore.getTask(request.params.taskId);
+      if (!task) {
+        response.status(404).json({ ok: false, error: 'task not found' });
+        return;
+      }
+      dispatchAgent = await resolveDispatchAgent(teamStore, task);
+      runningTask = await teamStore.startTask(task.taskId, {
+        agentId: dispatchAgent.agentId,
+        mode: 'direct'
+      });
+      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || dispatchAgent.session || 'main', runningTask);
+
+      const result = await agentAdapter.runTurn(dispatchAgent.profileId, {
+        prompt: task.prompt,
+        conversation: null,
+        task,
+        agent: dispatchAgent
+      });
+      const completedTask = await teamStore.completeTask(task.taskId, {
+        agentId: dispatchAgent.agentId,
+        result: result.reply || result.error || '',
+        turnId: result.turnId || null
+      });
+      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || dispatchAgent.session || 'main', completedTask);
+      response.json({ ok: true, task: completedTask });
+    } catch (error) {
+      if (runningTask && dispatchAgent) {
+        try {
+          const failedTask = await teamStore.failTask(runningTask.taskId, {
+            agentId: dispatchAgent.agentId,
+            error: error.message
+          });
+          await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || dispatchAgent.session || 'main', failedTask);
+        } catch {
+          // Preserve the original dispatch error.
+        }
+      }
+      next(error);
+    }
+  });
+
   app.post('/api/team/tasks', requireToken(config.token), async (request, response, next) => {
     try {
       requireTeamStore(teamStore);
@@ -246,6 +308,15 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     try {
       requireTeamStore(teamStore);
       response.json({ context: await teamStore.getContext() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/team/trace/:id', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      response.json({ trace: await teamStore.trace(request.params.id) });
     } catch (error) {
       next(error);
     }

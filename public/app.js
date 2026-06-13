@@ -22,6 +22,8 @@
   const teamPrompt = document.getElementById('team-prompt');
   const sendTeamTaskButton = document.getElementById('send-team-task');
   const refreshTeamButton = document.getElementById('refresh-team');
+  const teamTasks = document.getElementById('team-tasks');
+  const teamTrace = document.getElementById('team-trace');
   const teamMessages = document.getElementById('team-messages');
   let session = new URLSearchParams(window.location.search).get('session') || 'main';
   let lastConversationSignature = '';
@@ -274,6 +276,73 @@
     return item;
   }
 
+  function renderTeamTask(task) {
+    const item = document.createElement('article');
+    item.className = 'team-task';
+
+    const main = document.createElement('div');
+    main.className = 'team-task-main';
+
+    const title = document.createElement('div');
+    title.className = 'team-task-title';
+    title.textContent = task.title || task.taskId;
+
+    const status = document.createElement('div');
+    status.className = 'team-agent-role';
+    status.textContent = task.status || 'queued';
+
+    const meta = document.createElement('div');
+    meta.className = 'team-task-meta';
+    meta.textContent = `${task.taskId} | leader ${task.leaderAgentId || 'none'} | ${task.assignedTo || ''}`;
+
+    const actions = document.createElement('div');
+    actions.className = 'conversation-toolbar';
+
+    const dispatch = document.createElement('button');
+    dispatch.type = 'button';
+    dispatch.textContent = 'Run';
+    dispatch.disabled = !['queued', 'failed'].includes(task.status);
+    dispatch.addEventListener('click', () => {
+      dispatchTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const trace = document.createElement('button');
+    trace.type = 'button';
+    trace.textContent = 'Trace';
+    trace.addEventListener('click', () => {
+      loadTeamTrace(task.taskId).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    main.append(title, status);
+    actions.append(dispatch, trace);
+    item.append(main, meta, actions);
+    return item;
+  }
+
+  function renderTraceEvent(event) {
+    const item = document.createElement('article');
+    item.className = 'team-trace-event';
+
+    const main = document.createElement('div');
+    main.className = 'team-trace-main';
+
+    const type = document.createElement('div');
+    type.className = 'team-trace-type';
+    type.textContent = event.type || 'event';
+
+    const time = document.createElement('div');
+    time.className = 'team-agent-role';
+    time.textContent = (event.createdAt || '').slice(11, 19);
+
+    const data = document.createElement('div');
+    data.className = 'team-trace-data';
+    data.textContent = `${event.agentId || ''} ${JSON.stringify(event.data || {})}`.trim();
+
+    main.append(type, time);
+    item.append(main, data);
+    return item;
+  }
+
   async function loadTeamProfiles() {
     const response = await fetch('/api/team/agents');
     const body = await response.json();
@@ -328,6 +397,7 @@
     syncAgentPanes(rosterBody.roster);
     lastTeamSignature = signature;
     setTeamStatus(`${rosterBody.roster.filter((agent) => agent.status !== 'removed').length} agents`, 'ok');
+    await loadTeamTasks({ silent: true });
   }
 
   async function addTeamAgent() {
@@ -388,11 +458,52 @@
       }
       setTeamStatus(`${body.task.status} ${body.task.taskId}`, 'ok');
       await loadTeamState();
+      await loadTeamTrace(body.task.taskId);
     } catch (error) {
       setTeamStatus(error.message, 'error');
     } finally {
       sendTeamTaskButton.disabled = false;
     }
+  }
+
+  async function loadTeamTasks(options = {}) {
+    const response = await fetch('/api/team/tasks');
+    const body = await response.json();
+    if (!response.ok) {
+      if (!options.silent) {
+        setTeamStatus(body.error || `tasks ${response.status}`, 'error');
+      }
+      return;
+    }
+    teamTasks.replaceChildren(...body.tasks.slice(-8).reverse().map(renderTeamTask));
+  }
+
+  async function dispatchTeamTask(task) {
+    setTeamStatus(`running ${task.taskId}`, 'running');
+    const response = await fetch(`/api/team/tasks/${encodeURIComponent(task.taskId)}/dispatch`, {
+      method: 'POST',
+      headers: teamHeaders(),
+      body: JSON.stringify({ terminalSession: session })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setTeamStatus(body.error || `dispatch ${response.status}`, 'error');
+      return;
+    }
+    setTeamStatus(`${body.task.status} ${body.task.taskId}`, body.task.status === 'failed' ? 'error' : 'ok');
+    await loadTeamTasks();
+    await loadTeamState({ silent: true });
+    await loadTeamTrace(body.task.taskId);
+  }
+
+  async function loadTeamTrace(taskId) {
+    const response = await fetch(`/api/team/trace/${encodeURIComponent(taskId)}`);
+    const body = await response.json();
+    if (!response.ok) {
+      setTeamStatus(body.error || `trace ${response.status}`, 'error');
+      return;
+    }
+    teamTrace.replaceChildren(...body.trace.events.slice(-8).map(renderTraceEvent));
   }
 
   function renderTurn(turn, options = {}) {
