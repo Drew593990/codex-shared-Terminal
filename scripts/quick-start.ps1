@@ -156,6 +156,8 @@ if ($OpenBrowser) {
     teamTasks = "$baseUrl/api/team/tasks"
     teamTaskClaim = "$baseUrl/api/team/tasks/{taskId}/claim"
     teamTaskHeartbeat = "$baseUrl/api/team/tasks/{taskId}/heartbeat"
+    teamTaskNeedsUser = "$baseUrl/api/team/tasks/{taskId}/needs-user"
+    teamTaskResume = "$baseUrl/api/team/tasks/{taskId}/resume"
     teamTaskComplete = "$baseUrl/api/team/tasks/{taskId}/complete"
     teamTaskFail = "$baseUrl/api/team/tasks/{taskId}/fail"
     teamTaskRecoverStale = "$baseUrl/api/team/tasks/recover-stale"

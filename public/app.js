@@ -326,6 +326,14 @@
       retryTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
     });
 
+    const resume = document.createElement('button');
+    resume.type = 'button';
+    resume.textContent = 'Resume';
+    resume.disabled = task.status !== 'needs_user';
+    resume.addEventListener('click', () => {
+      resumeTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
     const trace = document.createElement('button');
     trace.type = 'button';
     trace.textContent = 'Trace';
@@ -334,7 +342,7 @@
     });
 
     main.append(title, status);
-    actions.append(dispatch, cancel, retry, trace);
+    actions.append(dispatch, cancel, retry, resume, trace);
     item.append(main, meta);
     if (task.result) {
       item.append(result);
@@ -620,6 +628,30 @@
     }
     setTeamStatus(`queued ${body.task.taskId}`, 'ok');
     await loadTeamTasks();
+    await loadTeamState({ silent: true });
+    await loadTeamTrace(task.taskId);
+  }
+
+  async function resumeTeamTask(task) {
+    const answer = teamPrompt.value.trim();
+    setTeamStatus(`resuming ${task.taskId}`, 'running');
+    const response = await fetch(`/api/team/tasks/${encodeURIComponent(task.taskId)}/resume`, {
+      method: 'POST',
+      headers: teamHeaders(),
+      body: JSON.stringify({
+        terminalSession: session,
+        resumedBy: 'browser',
+        answer: answer || 'resume from browser'
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setTeamStatus(body.error || `resume ${response.status}`, 'error');
+      return;
+    }
+    setTeamStatus(`queued ${body.task.taskId}`, 'ok');
+    await loadTeamTasks();
+    await loadTeamInbox();
     await loadTeamState({ silent: true });
     await loadTeamTrace(task.taskId);
   }

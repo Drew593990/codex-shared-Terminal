@@ -83,6 +83,8 @@ To start and open the browser:
     "teamTasks": "http://127.0.0.1:7842/api/team/tasks",
     "teamTaskClaim": "http://127.0.0.1:7842/api/team/tasks/{taskId}/claim",
     "teamTaskHeartbeat": "http://127.0.0.1:7842/api/team/tasks/{taskId}/heartbeat",
+    "teamTaskNeedsUser": "http://127.0.0.1:7842/api/team/tasks/{taskId}/needs-user",
+    "teamTaskResume": "http://127.0.0.1:7842/api/team/tasks/{taskId}/resume",
     "teamTaskComplete": "http://127.0.0.1:7842/api/team/tasks/{taskId}/complete",
     "teamTaskFail": "http://127.0.0.1:7842/api/team/tasks/{taskId}/fail",
     "teamTaskRecoverStale": "http://127.0.0.1:7842/api/team/tasks/recover-stale",
@@ -159,6 +161,7 @@ The inbox response includes:
 
 - `agent`: the roster entry for this participant;
 - `tasks`: queued work this agent can claim;
+- `items`: unread inbox items such as user-input requests or completed results;
 - `messages`: pending inter-agent messages;
 - `context`: shared roster, leader, active tasks, recent messages, and notes;
 - `terminal`: the visible session name, profile id, active session metadata, and
@@ -197,6 +200,48 @@ Invoke-RestMethod `
   -ContentType 'application/json' `
   -Body $body
 ```
+
+Pause for user input when the agent cannot continue safely:
+
+```powershell
+$body = @{
+  agentId = 'echo1'
+  question = 'Please confirm which file should be edited before I continue.'
+  reason = 'missing user decision'
+  terminalSession = 'main'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/tasks/<taskId>/needs-user" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+This changes the task to `needs_user`, releases the active claim, writes a
+`user_request` item to the team inbox, records a trace event, and publishes a
+compact notice into the visible terminal transcript.
+
+Resume the task after the user answers:
+
+```powershell
+$body = @{
+  resumedBy = 'user'
+  answer = 'Edit server/team-store.js and keep public/app.js as the only UI change.'
+  terminalSession = 'main'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/tasks/<taskId>/resume" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+The response is stored as a shared context note and the task returns to
+`queued`, so an agent can claim it again with the updated context.
 
 Submit a successful result:
 

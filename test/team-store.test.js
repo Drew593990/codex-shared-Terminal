@@ -296,6 +296,56 @@ test('TeamStore cancels queued work and creates traceable retries', async () => 
   }
 });
 
+test('TeamStore lets agents pause work for user input and resume it', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    let taskIndex = 0;
+    const store = new TeamStore(root, {
+      now: createIncrementingClock('2026-06-14T04:00:00.000Z'),
+      taskIdFactory: () => `task-user-${++taskIndex}`,
+      messageIdFactory: () => `message-user-${taskIndex}`,
+      inboxIdFactory: () => 'inbox-user-1'
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await store.createTask({
+      title: 'Needs user',
+      prompt: '@leader ask for missing credentials',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    await store.claimTask(task.taskId, { agentId: 'echo1', leaseMs: 60000 });
+    const paused = await store.requestUserInput(task.taskId, {
+      agentId: 'echo1',
+      question: 'Please confirm whether to continue with the destructive step.',
+      reason: 'approval required before continuing'
+    });
+    const inbox = await store.listInbox();
+    const resumed = await store.resumeTask(task.taskId, {
+      resumedBy: 'user',
+      answer: 'Continue, but skip deletion.'
+    });
+    const context = await store.getContext();
+    const trace = await store.trace(task.taskId);
+
+    assert.equal(paused.status, 'needs_user');
+    assert.equal(paused.claimedBy, null);
+    assert.equal(paused.userRequest.question, 'Please confirm whether to continue with the destructive step.');
+    assert.equal(inbox[0].type, 'user_request');
+    assert.equal(inbox[0].summary, 'Please confirm whether to continue with the destructive step.');
+    assert.equal(resumed.status, 'queued');
+    assert.equal(resumed.userResponse.answer, 'Continue, but skip deletion.');
+    assert.match(context.notes.at(-1).body, /Continue, but skip deletion/);
+    assert.deepEqual(trace.events.map((event) => event.type).slice(-3), [
+      'task.needs_user',
+      'context.note',
+      'task.resumed'
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TeamStore exposes an agent inbox with assigned tasks, messages, and context', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
   try {
@@ -322,11 +372,17 @@ test('TeamStore exposes an agent inbox with assigned tasks, messages, and contex
       taskId: task.taskId,
       body: '@echo2 include the current context'
     });
+    await store.requestUserInput(task.taskId, {
+      agentId: 'echo2',
+      question: 'Please provide the missing input.'
+    });
 
     const inbox = await store.agentInbox('echo2');
 
     assert.equal(inbox.agent.agentId, 'echo2');
     assert.deepEqual(inbox.tasks.map((item) => item.taskId), [task.taskId]);
+    assert.deepEqual(inbox.items.map((item) => item.type), ['user_request']);
+    assert.equal(inbox.items[0].summary, 'Please provide the missing input.');
     assert.deepEqual(inbox.messages.map((message) => message.to), ['echo2', 'echo2']);
     assert.equal(inbox.context.leader.agentId, 'echo1');
     assert.equal(inbox.context.activeTasks[0].taskId, task.taskId);

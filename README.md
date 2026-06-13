@@ -147,8 +147,8 @@ The returned JSON includes:
 - `sessions`: visible terminal sessions;
 - `agents`: direct structured agents;
 - `teamAgentInbox`, `teamTaskClaim`, `teamTaskHeartbeat`,
-  `teamTaskComplete`, `teamTaskFail`, and `teamTaskRecoverStale`: Phase 2 team
-  work endpoints for external agents;
+  `teamTaskNeedsUser`, `teamTaskResume`, `teamTaskComplete`, `teamTaskFail`,
+  and `teamTaskRecoverStale`: Phase 2 team work endpoints for external agents;
 - `storage`: transcript and conversation paths.
 
 Use the direct API for clean prompt/reply turns:

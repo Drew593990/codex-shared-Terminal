@@ -324,6 +324,8 @@ Initial fields:
 - `handoffTo`;
 - `reviewedBy`;
 - `reviewStatus`;
+- `userRequest`;
+- `userResponse`;
 - `attempts`.
 
 Storage:
@@ -491,6 +493,8 @@ POST /api/team/roster/leader
 POST /api/team/roster/agents/:agentId/remove
 POST /api/team/tasks/:taskId/claim
 POST /api/team/tasks/:taskId/heartbeat
+POST /api/team/tasks/:taskId/needs-user
+POST /api/team/tasks/:taskId/resume
 POST /api/team/tasks/:taskId/complete
 POST /api/team/tasks/:taskId/fail
 POST /api/team/tasks/recover-stale
@@ -641,7 +645,8 @@ Each slice should include:
 - Should project configuration be public-by-default or ignored-by-default?
 - Should direct `opencode` continuation use ShareTerminal conversation ids,
   native CLI session ids, or both?
-- Should user approval be a task state (`needs_user`) or an inbox item type?
+- How much structure should `needs_user` requests require beyond a question,
+  reason, and resumed answer?
 - How should external agents such as openclaw discover the team API contract?
 - Should `@profileId` auto-select an idle instance, create a new instance, or
   ask the user when no exact `@agentId` is provided?

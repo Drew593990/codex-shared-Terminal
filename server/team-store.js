@@ -472,6 +472,10 @@ class TeamStore {
       throw new Error(`Unknown agent: ${safeAgentId}`);
     }
     const messages = await this.listMessages({ agent: safeAgentId });
+    const inboxItems = (await this.listInbox()).filter((item) => (
+      item.agentId === safeAgentId ||
+      (!item.agentId && item.taskId && item.taskId === agent.activeTaskId)
+    ));
     const tasks = (await this.listTasks()).filter((task) => {
       if (!['queued', 'needs_user'].includes(task.status)) {
         return false;
@@ -487,6 +491,7 @@ class TeamStore {
     return {
       agent,
       tasks,
+      items: inboxItems,
       messages,
       context: await this.getContext()
     };
@@ -583,6 +588,85 @@ class TeamStore {
       data: { leaseExpiresAt, note: input.note || null }
     });
     return updated;
+  }
+
+  async requestUserInput(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    const agentId = safeId(input.agentId || task.claimedBy || task.leaderAgentId, 'agentId');
+    if (task.status === 'running' && task.claimedBy && task.claimedBy !== agentId) {
+      throw new Error(`Task is not claimed by agent: ${agentId}`);
+    }
+    if (!['queued', 'running', 'needs_user'].includes(task.status)) {
+      throw new Error(`Task cannot request user input: ${task.taskId}`);
+    }
+    const question = String(input.question || input.prompt || 'User input required');
+    const reason = String(input.reason || '');
+    const paused = await this.updateTask(task.taskId, {
+      status: 'needs_user',
+      claimedBy: null,
+      claimedAt: null,
+      leaseExpiresAt: null,
+      lastHeartbeatAt: null,
+      userRequest: {
+        agentId,
+        question,
+        reason,
+        requestedAt: this.now()
+      }
+    });
+    await this.updateRosterAgent(agentId, { status: 'waiting', activeTaskId: task.taskId });
+    await this.createInboxItem(paused, {
+      type: 'user_request',
+      agentId,
+      summary: question
+    });
+    await this.appendEvent({
+      type: 'task.needs_user',
+      taskId: task.taskId,
+      agentId,
+      data: { question, reason }
+    });
+    return paused;
+  }
+
+  async resumeTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    if (task.status !== 'needs_user') {
+      throw new Error(`Task is not waiting for user input: ${task.taskId}`);
+    }
+    const resumedBy = String(input.resumedBy || 'user');
+    const answer = String(input.answer || input.response || '');
+    const note = await this.addContextNote({
+      taskId: task.taskId,
+      createdBy: resumedBy,
+      body: `User response for ${task.taskId}: ${answer}`
+    });
+    const resumed = await this.updateTask(task.taskId, {
+      status: input.status || 'queued',
+      error: null,
+      userResponse: {
+        resumedBy,
+        answer,
+        noteId: note.noteId,
+        resumedAt: this.now()
+      }
+    });
+    if (task.userRequest?.agentId) {
+      await this.updateRosterAgent(task.userRequest.agentId, { status: 'idle', activeTaskId: null });
+    }
+    await this.appendEvent({
+      type: 'task.resumed',
+      taskId: task.taskId,
+      agentId: task.leaderAgentId,
+      data: { resumedBy, answer, noteId: note.noteId, status: resumed.status }
+    });
+    return resumed;
   }
 
   async assertTaskClaimedBy(task, agentId) {
@@ -840,6 +924,12 @@ class TeamStore {
       createdAt: this.now()
     };
     await appendJsonLine(this.file('context-notes'), note);
+    await this.appendEvent({
+      type: 'context.note',
+      taskId: input.taskId || null,
+      agentId: input.createdBy || 'user',
+      data: { noteId: note.noteId }
+    });
     return note;
   }
 

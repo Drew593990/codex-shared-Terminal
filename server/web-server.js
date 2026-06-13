@@ -419,6 +419,28 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     }
   });
 
+  app.post('/api/team/tasks/:taskId/needs-user', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const task = await teamStore.requestUserInput(request.params.taskId, request.body || {});
+      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || task.leaderAgentId || 'main', task);
+      response.json({ ok: true, task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/tasks/:taskId/resume', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const task = await teamStore.resumeTask(request.params.taskId, request.body || {});
+      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || task.leaderAgentId || 'main', task);
+      response.json({ ok: true, task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/team/tasks/:taskId/cancel', requireToken(config.token), async (request, response, next) => {
     try {
       requireTeamStore(teamStore);

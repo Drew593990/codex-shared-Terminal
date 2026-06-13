@@ -731,6 +731,77 @@ test('team task API cancels queued work and creates retry tasks', async () => {
   }
 });
 
+test('team task API pauses for user input and resumes queued work', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-user-api-${++taskIndex}`,
+    messageIdFactory: () => `message-user-api-${taskIndex}`,
+    inboxIdFactory: () => 'inbox-user-api-1'
+  });
+  const manager = createFakeManager();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await teamStore.createTask({
+      title: 'Needs user API',
+      prompt: '@leader ask before continuing',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+    await teamStore.claimTask(task.taskId, { agentId: 'echo1', leaseMs: 60000 });
+
+    const pauseResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/needs-user`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        agentId: 'echo1',
+        question: 'Should this continue?',
+        reason: 'needs approval',
+        terminalSession: 'main'
+      })
+    });
+    const pauseBody = await pauseResponse.json();
+    assert.equal(pauseResponse.status, 200);
+    assert.equal(pauseBody.task.status, 'needs_user');
+
+    const inboxResponse = await fetch(`${base}/api/team/inbox`);
+    const inboxBody = await inboxResponse.json();
+    assert.equal(inboxBody.items[0].type, 'user_request');
+    assert.equal(inboxBody.items[0].summary, 'Should this continue?');
+    assert.match(manager.systemMessages.at(-1).data, /\[team needs_user\] task-user-api-1/);
+
+    const resumeResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/resume`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        resumedBy: 'user',
+        answer: 'Continue with constraints.',
+        terminalSession: 'main'
+      })
+    });
+    const resumeBody = await resumeResponse.json();
+    assert.equal(resumeResponse.status, 200);
+    assert.equal(resumeBody.task.status, 'queued');
+    assert.equal(resumeBody.task.userResponse.answer, 'Continue with constraints.');
+    assert.match(manager.systemMessages.at(-1).data, /\[team queued\] task-user-api-1/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team agent inbox API returns messages, assigned tasks, and context', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   let taskIndex = 0;
@@ -763,12 +834,18 @@ test('team agent inbox API returns messages, assigned tasks, and context', async
       createdBy: 'codex',
       assignedTo: 'echo2'
     });
+    await teamStore.requestUserInput(task.taskId, {
+      agentId: 'echo2',
+      question: 'Please provide the missing input.'
+    });
 
     const inboxResponse = await fetch(`${base}/api/team/agents/echo2/inbox`);
     const inboxBody = await inboxResponse.json();
     assert.equal(inboxResponse.status, 200);
     assert.equal(inboxBody.inbox.agent.agentId, 'echo2');
     assert.deepEqual(inboxBody.inbox.tasks.map((item) => item.taskId), [task.taskId]);
+    assert.deepEqual(inboxBody.inbox.items.map((item) => item.type), ['user_request']);
+    assert.equal(inboxBody.inbox.items[0].summary, 'Please provide the missing input.');
     assert.equal(inboxBody.inbox.messages[0].to, 'echo2');
     assert.equal(inboxBody.inbox.context.leader.agentId, 'echo1');
     assert.equal(inboxBody.inbox.terminal.session, 'echo2');
