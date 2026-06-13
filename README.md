@@ -197,6 +197,8 @@ Full agent integration details are in
 - Direct agent executable paths default to `opencode` and `claude` on `PATH`.
   They can be overridden with `SHARETERMINAL_OPENCODE_COMMAND`,
   `SHARETERMINAL_CLAUDE_COMMAND`, or `SHARETERMINAL_NPM_GLOBAL_DIR`.
+- Optional project-local agent registry overrides can be stored in
+  `<repo>\.shareterminal\agents.json`.
 
 Do not expose this service to a LAN or the public internet without adding
 stronger access controls.

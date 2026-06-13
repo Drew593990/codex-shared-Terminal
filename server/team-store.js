@@ -153,8 +153,23 @@ class TeamStore {
     return `${profileId}${index}`;
   }
 
+  async assertAgentProfileAvailable(profileId) {
+    const profiles = await this.listAgentProfiles();
+    if (profiles.length === 0) {
+      return;
+    }
+    const profile = profiles.find((item) => item.profileId === profileId);
+    if (!profile) {
+      throw new Error(`Unknown agent profile: ${profileId}`);
+    }
+    if (profile.enabled === false) {
+      throw new Error(`Agent profile is disabled: ${profileId}`);
+    }
+  }
+
   async addRosterAgent(input) {
     const profileId = safeId(input.profileId, 'profileId');
+    await this.assertAgentProfileAvailable(profileId);
     const roster = await this.listRoster();
     const agentId = safeId(input.agentId || this.nextAgentId(profileId, roster), 'agentId');
     if (roster.some((agent) => agent.agentId === agentId && agent.status !== 'removed')) {

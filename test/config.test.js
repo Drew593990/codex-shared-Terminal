@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const { mkdir, rm, writeFile } = require('node:fs/promises');
+const path = require('node:path');
 const test = require('node:test');
 
 const { loadConfig } = require('../server/config');
@@ -61,4 +63,64 @@ test('loadConfig can resolve direct CLIs from an explicit npm global directory',
     config.agentProfiles.claude.command,
     'X:\\tools\\npm-global\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe'
   );
+});
+
+test('loadConfig merges project-local agent registry overrides', async () => {
+  const root = path.join(__dirname, '..', '.tmp', `config-agents-${Date.now()}`);
+  const registryDir = path.join(root, '.shareterminal');
+  try {
+    await mkdir(registryDir, { recursive: true });
+    await writeFile(path.join(registryDir, 'agents.json'), JSON.stringify({
+      agentProfiles: {
+        opencode: {
+          enabled: false
+        },
+        researcher: {
+          label: 'Research Agent',
+          mode: 'command',
+          command: 'research-cli',
+          args: ['run'],
+          promptMode: 'stdin',
+          capabilities: ['research'],
+          worktreeMode: 'isolated'
+        }
+      }
+    }), 'utf8');
+
+    const config = loadConfig({
+      SHARETERMINAL_CWD: root,
+      SHARETERMINAL_TOKEN: 'secret'
+    });
+
+    assert.equal(config.agentProfiles.opencode.enabled, false);
+    assert.equal(config.agentProfiles.opencode.command, 'opencode');
+    assert.equal(config.agentProfiles.researcher.label, 'Research Agent');
+    assert.equal(config.agentProfiles.researcher.command, 'research-cli');
+    assert.deepEqual(config.agentProfiles.researcher.capabilities, ['research']);
+    assert.equal(config.agentProfiles.researcher.worktreeMode, 'isolated');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('loadConfig accepts a UTF-8 BOM in project-local agent registry', async () => {
+  const root = path.join(__dirname, '..', '.tmp', `config-agents-bom-${Date.now()}`);
+  const registryDir = path.join(root, '.shareterminal');
+  try {
+    await mkdir(registryDir, { recursive: true });
+    await writeFile(
+      path.join(registryDir, 'agents.json'),
+      `\uFEFF${JSON.stringify({ agentProfiles: { reviewer: { label: 'Reviewer', mode: 'echo' } } })}`,
+      'utf8'
+    );
+
+    const config = loadConfig({
+      SHARETERMINAL_CWD: root,
+      SHARETERMINAL_TOKEN: 'secret'
+    });
+
+    assert.equal(config.agentProfiles.reviewer.label, 'Reviewer');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

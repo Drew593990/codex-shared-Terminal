@@ -53,6 +53,34 @@ test('TeamStore keeps repeatable agent instances and marks the first one as lead
   }
 });
 
+test('TeamStore rejects unknown or disabled roster agent profiles when registry is configured', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    const store = new TeamStore(root, {
+      now: createClock(),
+      profiles: {
+        opencode: { label: 'opencode', enabled: true },
+        disabled: { label: 'Disabled', enabled: false }
+      }
+    });
+
+    await assert.rejects(
+      () => store.addRosterAgent({ profileId: 'missing' }),
+      /Unknown agent profile: missing/
+    );
+    await assert.rejects(
+      () => store.addRosterAgent({ profileId: 'disabled' }),
+      /Agent profile is disabled: disabled/
+    );
+
+    const agent = await store.addRosterAgent({ profileId: 'opencode' });
+
+    assert.equal(agent.agentId, 'opencode1');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TeamStore routes @team tasks to the leader and records mentions', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
   try {

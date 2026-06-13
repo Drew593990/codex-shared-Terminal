@@ -320,6 +320,32 @@ It also honors these environment variables:
 - `SHARETERMINAL_PORT`
 - `SHARETERMINAL_TOKEN`
 
+Project-local agent registry overrides can be stored at
+`<repo>\.shareterminal\agents.json`:
+
+```json
+{
+  "agentProfiles": {
+    "opencode": {
+      "enabled": false
+    },
+    "researcher": {
+      "label": "Research Agent",
+      "mode": "command",
+      "command": "research-cli",
+      "args": ["run"],
+      "promptMode": "stdin",
+      "capabilities": ["research"],
+      "worktreeMode": "isolated"
+    }
+  }
+}
+```
+
+Built-in profiles can be overridden by id. New profiles become available through
+`/api/team/agents`. Unknown or disabled profiles cannot be added to the active
+team roster.
+
 Runtime files stay under the project root:
 
 - logs: `<repo>\.tmp`;

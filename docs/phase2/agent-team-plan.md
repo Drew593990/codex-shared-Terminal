@@ -189,7 +189,7 @@ Initial fields:
 Storage:
 
 - default built-in registry in code;
-- optional project override in `<repo>\.shareterminal\agents.json` later.
+- optional project override in `<repo>\.shareterminal\agents.json`.
 
 Rules:
 
