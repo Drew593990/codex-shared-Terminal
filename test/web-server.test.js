@@ -762,6 +762,9 @@ test('team agent inbox API returns messages, assigned tasks, and context', async
     assert.deepEqual(inboxBody.inbox.tasks.map((item) => item.taskId), [task.taskId]);
     assert.equal(inboxBody.inbox.messages[0].to, 'echo2');
     assert.equal(inboxBody.inbox.context.leader.agentId, 'echo1');
+    assert.equal(inboxBody.inbox.terminal.session, 'echo2');
+    assert.equal(inboxBody.inbox.terminal.profileId, 'echo');
+    assert.equal(inboxBody.inbox.terminal.recentTranscript[0].data, 'ready');
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });

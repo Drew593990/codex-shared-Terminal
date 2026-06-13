@@ -268,7 +268,24 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
   app.get('/api/team/agents/:agentId/inbox', async (request, response, next) => {
     try {
       requireTeamStore(teamStore);
-      response.json({ inbox: await teamStore.agentInbox(request.params.agentId) });
+      const inbox = await teamStore.agentInbox(request.params.agentId);
+      const sessionName = inbox.agent.session || inbox.agent.agentId;
+      const sessions = typeof sessionManager.listSessions === 'function' ? sessionManager.listSessions() : [];
+      const activeSession = sessions.find((item) => item.name === sessionName) || null;
+      const recentTranscript = typeof sessionManager.readTranscript === 'function'
+        ? await sessionManager.readTranscript(sessionName, parseLimit(request.query.transcriptLimit) || 20)
+        : [];
+      response.json({
+        inbox: {
+          ...inbox,
+          terminal: {
+            session: sessionName,
+            profileId: inbox.agent.profileId,
+            activeSession,
+            recentTranscript
+          }
+        }
+      });
     } catch (error) {
       next(error);
     }

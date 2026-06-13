@@ -155,6 +155,15 @@ $share = .\scripts\quick-start.ps1 | ConvertFrom-Json
 Invoke-RestMethod -Uri "$($share.baseUrl)/api/team/agents/echo1/inbox"
 ```
 
+The inbox response includes:
+
+- `agent`: the roster entry for this participant;
+- `tasks`: queued work this agent can claim;
+- `messages`: pending inter-agent messages;
+- `context`: shared roster, leader, active tasks, recent messages, and notes;
+- `terminal`: the visible session name, profile id, active session metadata, and
+  recent transcript records for that agent's terminal pane.
+
 Claim a queued task before working on it:
 
 ```powershell
