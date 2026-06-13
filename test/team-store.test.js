@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, rm } = require('node:fs/promises');
+const { mkdtemp, rm, writeFile } = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -76,6 +76,24 @@ test('TeamStore rejects unknown or disabled roster agent profiles when registry 
     const agent = await store.addRosterAgent({ profileId: 'opencode' });
 
     assert.equal(agent.agentId, 'opencode1');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('TeamStore reads BOM-prefixed JSONL records for manual recovery files', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    await writeFile(
+      path.join(root, 'roster.jsonl'),
+      `\uFEFF${JSON.stringify({ agentId: 'echo1', profileId: 'echo', role: 'leader', status: 'idle' })}\n`,
+      'utf8'
+    );
+    const store = new TeamStore(root, { profiles: { echo: { label: 'Echo', mode: 'echo' } } });
+
+    const roster = await store.listRoster();
+
+    assert.equal(roster[0].agentId, 'echo1');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

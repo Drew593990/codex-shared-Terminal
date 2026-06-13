@@ -270,6 +270,9 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
       requireTeamStore(teamStore);
       const inbox = await teamStore.agentInbox(request.params.agentId);
       const sessionName = inbox.agent.session || inbox.agent.agentId;
+      if (typeof sessionManager.getOrCreateWithProfile === 'function') {
+        sessionManager.getOrCreateWithProfile(sessionName, inbox.agent.profileId);
+      }
       const sessions = typeof sessionManager.listSessions === 'function' ? sessionManager.listSessions() : [];
       const activeSession = sessions.find((item) => item.name === sessionName) || null;
       const recentTranscript = typeof sessionManager.readTranscript === 'function'

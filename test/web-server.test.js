@@ -15,7 +15,16 @@ function createFakeManager() {
     systemMessages,
     createdAgentSessions,
     listSessions() {
-      return [{ name: 'main', shell: 'powershell.exe', clients: 0 }];
+      return [
+        { name: 'main', shell: 'powershell.exe', clients: 0 },
+        ...createdAgentSessions.map((session) => ({
+          name: session.name,
+          profileName: session.profileName,
+          command: `profile:${session.profileName}`,
+          cwd: 'test-cwd',
+          clients: 0
+        }))
+      ];
     },
     getOrCreateWithProfile: (name, profileName) => {
       createdAgentSessions.push({ name, profileName });
@@ -764,6 +773,9 @@ test('team agent inbox API returns messages, assigned tasks, and context', async
     assert.equal(inboxBody.inbox.context.leader.agentId, 'echo1');
     assert.equal(inboxBody.inbox.terminal.session, 'echo2');
     assert.equal(inboxBody.inbox.terminal.profileId, 'echo');
+    assert.deepEqual(manager.createdAgentSessions, [{ name: 'echo2', profileName: 'echo' }]);
+    assert.equal(inboxBody.inbox.terminal.activeSession.name, 'echo2');
+    assert.equal(inboxBody.inbox.terminal.activeSession.cwd, 'test-cwd');
     assert.equal(inboxBody.inbox.terminal.recentTranscript[0].data, 'ready');
   } finally {
     await new Promise((resolve) => server.close(resolve));

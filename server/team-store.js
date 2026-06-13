@@ -31,7 +31,7 @@ async function readJsonLines(file) {
   return text
     .split(/\r?\n/)
     .filter(Boolean)
-    .map((line) => JSON.parse(line));
+    .map((line) => JSON.parse(line.replace(/^\uFEFF/, '')));
 }
 
 async function appendJsonLine(file, record) {
