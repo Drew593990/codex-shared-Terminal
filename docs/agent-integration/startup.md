@@ -83,6 +83,8 @@ To start and open the browser:
     "teamTasks": "http://127.0.0.1:7842/api/team/tasks",
     "teamTaskClaim": "http://127.0.0.1:7842/api/team/tasks/{taskId}/claim",
     "teamTaskHeartbeat": "http://127.0.0.1:7842/api/team/tasks/{taskId}/heartbeat",
+    "teamTaskComplete": "http://127.0.0.1:7842/api/team/tasks/{taskId}/complete",
+    "teamTaskFail": "http://127.0.0.1:7842/api/team/tasks/{taskId}/fail",
     "teamTaskRecoverStale": "http://127.0.0.1:7842/api/team/tasks/recover-stale",
     "teamMessages": "http://127.0.0.1:7842/api/team/messages",
     "teamTrace": "http://127.0.0.1:7842/api/team/trace/{id}"
@@ -187,6 +189,43 @@ Invoke-RestMethod `
   -Body $body
 ```
 
+Submit a successful result:
+
+```powershell
+$body = @{
+  agentId = 'echo1'
+  result = 'Completed the assigned check. Evidence: tests passed.'
+  turnId = 'optional-local-turn-id'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/tasks/<taskId>/complete" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+Submit a failure that should be retryable:
+
+```powershell
+$body = @{
+  agentId = 'echo1'
+  error = 'The command failed before producing a result.'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/tasks/<taskId>/fail" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+Completed and failed submissions create inbox items and trace events. If the
+task has a separate leader, ShareTerminal also sends a handoff message to the
+leader's team inbox.
+
 If an agent crashes or stops heartbeating, a coordinator can return expired work
 to the queue:
 
@@ -290,5 +329,5 @@ Runtime files stay under the project root:
 6. Read `/api/conversations/{conversationId}/turns` or
    `/api/sessions/{session}/transcript` to continue from prior state.
 7. For team participation, poll `/api/team/agents/{agentId}/inbox`, claim a
-   queued task, heartbeat while working, and let stale recovery return expired
-   work to the queue.
+   queued task, heartbeat while working, submit completion or failure, and let
+   stale recovery return expired work to the queue.

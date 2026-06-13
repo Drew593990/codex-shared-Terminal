@@ -43,8 +43,8 @@ sync.
 - WebSocket streaming for visible terminal I/O.
 - Authenticated HTTP API for terminal input.
 - Direct JSON conversation API for `echo`, `opencode`, and `claude`.
-- Phase 2 team APIs for agent inboxes, task claim, heartbeat, retry, and stale
-  recovery.
+- Phase 2 team APIs for agent inboxes, task claim, heartbeat, result/failure
+  submission, retry, and stale recovery.
 - Server-side system notices for direct-agent `running` and `completed` states.
 - Persistent JSONL logs under the project-local `data` directory.
 - Project-local cache/temp layout for machines where global temp/cache writes
@@ -146,8 +146,9 @@ The returned JSON includes:
 - `endpoints`: stable endpoint templates;
 - `sessions`: visible terminal sessions;
 - `agents`: direct structured agents;
-- `teamAgentInbox`, `teamTaskClaim`, `teamTaskHeartbeat`, and
-  `teamTaskRecoverStale`: Phase 2 team work endpoints for external agents;
+- `teamAgentInbox`, `teamTaskClaim`, `teamTaskHeartbeat`,
+  `teamTaskComplete`, `teamTaskFail`, and `teamTaskRecoverStale`: Phase 2 team
+  work endpoints for external agents;
 - `storage`: transcript and conversation paths.
 
 Use the direct API for clean prompt/reply turns:

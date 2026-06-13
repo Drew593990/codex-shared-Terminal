@@ -850,6 +850,118 @@ test('team claim API supports agent heartbeat and stale recovery', async () => {
   }
 });
 
+test('team claimed task API accepts claimant completion and leader handoff', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  let messageIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-submit-api-${++taskIndex}`,
+    messageIdFactory: () => `message-submit-api-${++messageIndex}`,
+    inboxIdFactory: () => 'inbox-submit-api-1'
+  });
+  const manager = createFakeManager();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const task = await teamStore.createTask({
+      title: 'API submit task',
+      prompt: '@echo2 return result through API',
+      createdBy: 'echo1',
+      assignedTo: 'echo2',
+      leaderAgentId: 'echo1'
+    });
+    await teamStore.claimTask(task.taskId, { agentId: 'echo2', leaseMs: 60000 });
+
+    const completeResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/complete`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'echo2', result: 'api worker result', turnId: 'turn-api-submit' })
+    });
+    const completeBody = await completeResponse.json();
+    assert.equal(completeResponse.status, 200);
+    assert.equal(completeBody.task.status, 'completed');
+    assert.equal(completeBody.task.result, 'api worker result');
+
+    const inboxResponse = await fetch(`${base}/api/team/inbox`);
+    const inboxBody = await inboxResponse.json();
+    assert.equal(inboxBody.items[0].taskId, task.taskId);
+
+    const leaderInboxResponse = await fetch(`${base}/api/team/agents/echo1/inbox`);
+    const leaderInboxBody = await leaderInboxResponse.json();
+    assert.match(leaderInboxBody.inbox.messages.at(-1).body, /api worker result/);
+    assert.match(manager.systemMessages.at(-1).data, /\[team completed\] task-submit-api-1/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('team claimed task API records claimant failure for retry', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-fail-api-${++taskIndex}`,
+    messageIdFactory: () => `message-fail-api-${taskIndex}`,
+    inboxIdFactory: () => 'inbox-fail-api-1'
+  });
+  const manager = createFakeManager();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const task = await teamStore.createTask({
+      title: 'API fail task',
+      prompt: '@echo2 fail through API',
+      createdBy: 'echo1',
+      assignedTo: 'echo2',
+      leaderAgentId: 'echo1'
+    });
+    await teamStore.claimTask(task.taskId, { agentId: 'echo2', leaseMs: 60000 });
+
+    const failResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/fail`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'echo2', error: 'api worker failure' })
+    });
+    const failBody = await failResponse.json();
+    assert.equal(failResponse.status, 200);
+    assert.equal(failBody.task.status, 'failed');
+    assert.equal(failBody.task.error, 'api worker failure');
+
+    const inboxResponse = await fetch(`${base}/api/team/inbox`);
+    const inboxBody = await inboxResponse.json();
+    assert.equal(inboxBody.items[0].type, 'task_failure');
+    assert.equal(inboxBody.items[0].summary, 'api worker failure');
+    assert.match(manager.systemMessages.at(-1).data, /\[team failed\] task-fail-api-1/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team dispatch marks failed agent runs as retryable inbox items', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   const teamStore = new TeamStore(root, {

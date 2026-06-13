@@ -15,7 +15,13 @@ function createClock() {
     '2026-06-14T02:00:04.000Z',
     '2026-06-14T02:00:05.000Z'
   ];
-  return () => values.shift() || '2026-06-14T02:00:99.000Z';
+  return () => values.shift() || '2026-06-14T02:00:59.000Z';
+}
+
+function createIncrementingClock(start = '2026-06-14T02:20:00.000Z') {
+  let offset = 0;
+  const startMs = new Date(start).getTime();
+  return () => new Date(startMs + offset++ * 1000).toISOString();
 }
 
 test('TeamStore keeps repeatable agent instances and marks the first one as leader', async () => {
@@ -379,6 +385,99 @@ test('TeamStore clears agent leases when claimed tasks close', async () => {
     assert.equal(completed.claimedBy, null);
     assert.equal(completed.leaseExpiresAt, null);
     assert.equal((await store.listRoster()).find((agent) => agent.agentId === 'echo1').activeTaskId, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('TeamStore lets the claimant complete work and hand results to the leader', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    let taskIndex = 0;
+    let messageIndex = 0;
+    const store = new TeamStore(root, {
+      now: createIncrementingClock('2026-06-14T02:40:00.000Z'),
+      taskIdFactory: () => `task-submit-${++taskIndex}`,
+      messageIdFactory: () => `message-submit-${++messageIndex}`,
+      inboxIdFactory: () => 'inbox-submit-1'
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const task = await store.createTask({
+      title: 'Worker result',
+      prompt: '@echo2 inspect and report',
+      createdBy: 'echo1',
+      assignedTo: 'echo2',
+      leaderAgentId: 'echo1'
+    });
+
+    await store.claimTask(task.taskId, { agentId: 'echo2', leaseMs: 60000 });
+    const completed = await store.completeClaimedTask(task.taskId, {
+      agentId: 'echo2',
+      result: 'worker checked the files',
+      turnId: 'turn-submit-1'
+    });
+    const inbox = await store.listInbox();
+    const leaderMessages = await store.listMessages({ agent: 'echo1' });
+    const trace = await store.trace(task.taskId);
+
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.result, 'worker checked the files');
+    assert.equal(completed.claimedBy, null);
+    assert.equal(completed.reviewedBy, 'echo1');
+    assert.equal(inbox[0].taskId, task.taskId);
+    assert.equal(inbox[0].agentId, 'echo2');
+    assert.match(leaderMessages.at(-1).body, /worker checked the files/);
+    assert.equal(leaderMessages.at(-1).from, 'echo2');
+    assert.equal(leaderMessages.at(-1).to, 'echo1');
+    assert.deepEqual(trace.events.map((event) => event.type).slice(-3), [
+      'task.claimed',
+      'task.completed',
+      'message.sent'
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('TeamStore lets the claimant fail work and records a retryable failure', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    let taskIndex = 0;
+    const store = new TeamStore(root, {
+      now: createIncrementingClock('2026-06-14T02:50:00.000Z'),
+      taskIdFactory: () => `task-fail-submit-${++taskIndex}`,
+      messageIdFactory: () => `message-fail-submit-${taskIndex}`,
+      inboxIdFactory: () => 'inbox-fail-submit-1'
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const task = await store.createTask({
+      title: 'Worker failure',
+      prompt: '@echo2 try risky work',
+      createdBy: 'echo1',
+      assignedTo: 'echo2',
+      leaderAgentId: 'echo1'
+    });
+
+    await store.claimTask(task.taskId, { agentId: 'echo2', leaseMs: 60000 });
+    await assert.rejects(
+      () => store.completeClaimedTask(task.taskId, { agentId: 'echo1', result: 'not mine' }),
+      /Task is not claimed by agent: echo1/
+    );
+    const failed = await store.failClaimedTask(task.taskId, {
+      agentId: 'echo2',
+      error: 'worker command failed'
+    });
+    const inbox = await store.listInbox();
+    const retry = await store.retryTask(task.taskId, { createdBy: 'echo1' });
+
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.error, 'worker command failed');
+    assert.equal(failed.claimedBy, null);
+    assert.equal(inbox[0].type, 'task_failure');
+    assert.equal(inbox[0].summary, 'worker command failed');
+    assert.equal(retry.retryOf, task.taskId);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

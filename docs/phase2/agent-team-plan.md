@@ -491,6 +491,8 @@ POST /api/team/roster/leader
 POST /api/team/roster/agents/:agentId/remove
 POST /api/team/tasks/:taskId/claim
 POST /api/team/tasks/:taskId/heartbeat
+POST /api/team/tasks/:taskId/complete
+POST /api/team/tasks/:taskId/fail
 POST /api/team/tasks/recover-stale
 POST /api/team/tasks/:taskId/cancel
 POST /api/team/tasks/:taskId/retry

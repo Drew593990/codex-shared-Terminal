@@ -570,6 +570,61 @@ class TeamStore {
     return updated;
   }
 
+  async assertTaskClaimedBy(task, agentId) {
+    if (task.status !== 'running' || task.claimedBy !== agentId) {
+      throw new Error(`Task is not claimed by agent: ${agentId}`);
+    }
+  }
+
+  async completeClaimedTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    const agentId = safeId(input.agentId || task.claimedBy || task.leaderAgentId, 'agentId');
+    await this.assertTaskClaimedBy(task, agentId);
+    const completed = await this.completeTask(task.taskId, {
+      agentId,
+      result: input.result,
+      turnId: input.turnId || null,
+      reviewedBy: input.reviewedBy || task.leaderAgentId || agentId,
+      reviewStatus: input.reviewStatus || 'submitted'
+    });
+    if (task.leaderAgentId && task.leaderAgentId !== agentId) {
+      await this.sendMessage({
+        from: agentId,
+        to: task.leaderAgentId,
+        taskId: task.taskId,
+        body: `@${task.leaderAgentId} ${agentId} completed ${task.taskId}: ${completed.result}`,
+        replyTo: input.replyTo || null
+      });
+    }
+    return completed;
+  }
+
+  async failClaimedTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    const agentId = safeId(input.agentId || task.claimedBy || task.leaderAgentId, 'agentId');
+    await this.assertTaskClaimedBy(task, agentId);
+    const failed = await this.failTask(task.taskId, {
+      agentId,
+      error: input.error || input.reason || 'task failed'
+    });
+    if (task.leaderAgentId && task.leaderAgentId !== agentId) {
+      await this.sendMessage({
+        from: agentId,
+        to: task.leaderAgentId,
+        taskId: task.taskId,
+        body: `@${task.leaderAgentId} ${agentId} failed ${task.taskId}: ${failed.error}`,
+        replyTo: input.replyTo || null
+      });
+    }
+    return failed;
+  }
+
   async recoverStaleTasks(input = {}) {
     const staleBefore = input.staleBefore || this.now();
     const reason = String(input.reason || 'task lease expired');
