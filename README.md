@@ -70,6 +70,9 @@ The terminal side defines selectable CLI profiles for `main`, `opencode`, and
 sessions. The direct conversation API defines `echo`, `opencode`, and `claude`
 agent profiles separately from the raw terminal profiles.
 
+Phase 2 planning is tracked in
+[`docs\phase2\agent-team-plan.md`](docs/phase2/agent-team-plan.md).
+
 ## Architecture
 
 ```text
