@@ -17,6 +17,17 @@ Phase 2 should build on that foundation. The goal is not to turn ShareTerminal
 into a generic AI framework. The goal is to make local CLI agents cooperate as a
 visible, resumable, user-controllable team.
 
+The phase boundary is:
+
+- Phase 1: one visible terminal surface can be jointly controlled by the user
+  and Codex, but the active terminal view normally contains one working CLI at a
+  time, such as `opencode` or `claude`.
+- Phase 2: one visible ShareTerminal workspace can contain multiple live agents
+  as a team. They can see shared project context, current commands, runtime
+  environment, and work progress; they can talk to each other, split work,
+  execute different tasks, and remain visible while a backend communication
+  system handles dispatch, collection, tracing, and recovery.
+
 ## Problem Statement
 
 Codex App and similar agents have two practical limits when they call local CLI
@@ -27,9 +38,10 @@ tools:
 2. If the agent repeatedly launches CLIs such as `opencode` or `claude` as
    one-off commands, long conversations and session state are easy to lose.
 
-Phase 2 should solve the next layer above this: once sessions are visible and
-controllable, multiple agents need a shared task model, durable state, routing,
-result handoff, and recovery.
+Phase 2 should solve the next layer above this: once one CLI session is visible
+and controllable, multiple live CLI agents need a shared workspace model,
+durable task state, shared context, inter-agent messaging, task routing, result
+handoff, tracing, and recovery.
 
 ## Reference Research
 
@@ -67,9 +79,16 @@ Build a lightweight Agent Team Layer for ShareTerminal.
 The layer should allow a human user, Codex, openclaw, `opencode`, `claude`, and
 future local agents to:
 
+- appear together in one browser workspace instead of replacing each other in a
+  single terminal view;
 - register available agents and their capabilities;
 - create tasks with durable ids and status;
 - assign tasks to visible terminal sessions or direct agents;
+- read shared context about the current command, environment, repository state,
+  task board, and progress;
+- exchange messages with each other through a backend communication channel;
+- split a larger request into separate agent-owned tasks that can run in
+  parallel;
 - keep task progress and result history across restarts;
 - show agent/team state in the browser UI;
 - let the user intervene before, during, or after agent work;
@@ -87,7 +106,8 @@ Do not implement these in the first Phase 2 slice:
 - cloud orchestration;
 - a general SaaS multi-agent platform;
 - support for every CLI provider;
-- automatic autonomous agent loops without user-visible control.
+- automatic autonomous agent loops without user-visible control;
+- hidden background agents that the user cannot inspect or interrupt.
 
 ## Proposed Architecture
 
@@ -102,20 +122,25 @@ flowchart LR
   Server --> Registry["Agent Registry"]
   Server --> Board["Task Board"]
   Server --> Dispatcher["Dispatcher"]
+  Server --> Context["Shared Context"]
+  Server --> Messages["Agent Messages"]
   Server --> Inbox["Inbox / Ack"]
   Server --> Trace["Trace View"]
 
-  Dispatcher --> Sessions["Visible PTY sessions"]
+  Dispatcher --> Sessions["Visible PTY session grid"]
   Dispatcher --> Direct["Direct agent turns"]
 
-  Sessions --> PowerShell["main PowerShell"]
-  Sessions --> OpenCodeTui["opencode TUI"]
-  Sessions --> ClaudeTui["Claude Code TUI"]
+  Sessions --> PowerShell["main PowerShell pane"]
+  Sessions --> OpenCodeTui["opencode pane"]
+  Sessions --> ClaudeTui["Claude Code pane"]
+  Sessions --> AgentN["future agent pane"]
 
   Direct --> OpenCodeRun["opencode direct adapter"]
   Direct --> ClaudeRun["claude direct adapter"]
 
   Board --> Disk["Project-local JSONL / JSON state"]
+  Context --> Disk
+  Messages --> Disk
   Inbox --> Disk
   Trace --> Disk
 ```
@@ -179,6 +204,55 @@ Storage:
 - append-only JSONL event log for auditability;
 - materialized JSON summary for fast UI reads.
 
+### Shared Context
+
+Purpose: give every agent a common view of the current workspace without forcing
+them to scrape the terminal screen.
+
+Initial context fields:
+
+- active project root;
+- current terminal sessions and their last known commands;
+- environment summary relevant to local CLIs;
+- git branch/status summary;
+- active tasks and assigned agents;
+- recent completed results;
+- user-visible notes or constraints.
+
+Design rule:
+
+- shared context is a server-maintained projection, not an uncontrolled copy of
+  raw terminal scrollback;
+- agents should use structured context first, and raw transcripts only when
+  they need exact terminal evidence.
+
+### Agent Messages
+
+Purpose: let agents communicate without abusing terminal input as the only
+transport.
+
+Initial message fields:
+
+- `messageId`;
+- `from`;
+- `to`;
+- `taskId`;
+- `body`;
+- `status`;
+- `createdAt`;
+- `readAt`;
+- `replyTo`.
+
+Initial operations:
+
+- send message to an agent;
+- list pending messages for an agent;
+- mark message read;
+- link message to task trace.
+
+This is the lightweight equivalent of a mailbox. It should support agent-agent
+coordination while still surfacing important events to the user.
+
 ### Dispatcher
 
 Purpose: convert tasks into execution.
@@ -193,6 +267,8 @@ Rules:
 
 - one running task per agent by default;
 - queue additional work per agent;
+- allow multiple agents to run in parallel when they own separate sessions or
+  workspaces;
 - publish lifecycle notices into the visible terminal session;
 - write every state transition to the task event log;
 - never silently consume a result without recording it.
@@ -263,6 +339,8 @@ Read-only:
 GET /api/team/agents
 GET /api/team/tasks
 GET /api/team/tasks/:taskId
+GET /api/team/context
+GET /api/team/messages?agent=:agentId
 GET /api/team/inbox
 GET /api/team/trace/:id
 ```
@@ -273,6 +351,9 @@ Write:
 POST /api/team/tasks
 POST /api/team/tasks/:taskId/cancel
 POST /api/team/tasks/:taskId/retry
+POST /api/team/context/notes
+POST /api/team/messages
+POST /api/team/messages/:messageId/read
 POST /api/team/inbox/:itemId/ack
 ```
 
@@ -296,7 +377,10 @@ separate large platform.
 Suggested panel sections:
 
 - Agents: name, kind, busy/idle/error, active task;
+- Workspace Grid: multiple visible agent terminal panes in one browser
+  workspace;
 - Task Board: queued/running/completed/failed tasks;
+- Agent Messages: inter-agent messages and handoffs;
 - Inbox: results waiting for user/Codex acknowledgement;
 - Trace detail: selected task timeline.
 
@@ -314,28 +398,42 @@ Important UI rule:
 - Add deterministic `echo` execution path.
 - Show task status in a basic browser panel.
 
-### Slice 2: Dispatcher to Existing Direct API
+### Slice 2: Multi-Session Workspace View
+
+- Add browser layout for multiple visible terminal sessions.
+- Keep each agent pane attached to its own named PTY session.
+- Preserve user focus and input routing per pane.
+- Show shared session status without hiding terminal output.
+
+### Slice 3: Dispatcher to Existing Direct API
 
 - Route tasks to existing `/api/agents/:agent/turns`.
 - Publish task running/completed notices to visible terminal session.
 - Store task attempts and result.
 - Add retry/cancel where safe.
 
-### Slice 3: Inbox and Trace
+### Slice 4: Shared Context and Agent Messages
+
+- Add shared context projection.
+- Add agent message store and APIs.
+- Let an agent read pending messages and linked task context.
+- Surface important inter-agent messages in the UI.
+
+### Slice 5: Inbox and Trace
 
 - Create inbox item on terminal task completion.
 - Add ack and detail APIs.
 - Add trace endpoint for task and turn ids.
 - Add UI views for inbox and trace.
 
-### Slice 4: Agent Registry and Config
+### Slice 6: Agent Registry and Config
 
 - Add built-in registry.
 - Add optional project-local `.shareterminal\agents.json`.
 - Validate unknown agents and disabled agents.
 - Surface capabilities in UI/API.
 
-### Slice 5: Optional Worktree Mode
+### Slice 7: Optional Worktree Mode
 
 - Add per-agent isolated worktree support.
 - Add status and cleanup.
@@ -364,8 +462,9 @@ Each slice should include:
 
 Start with Slice 1 and Slice 2 only.
 
-This keeps the implementation close to the stable Phase 1 architecture while
-creating the durable model needed for later multi-agent cooperation. Avoid
-copying CCB internals. Use CCB as an architectural reference for boundaries:
-project anchor, dispatcher, message lineage, provider adapters, inbox, and
-trace.
+This creates two missing foundations before deeper automation: durable task
+state and a browser workspace that can show multiple live agents at once. After
+those are stable, add dispatcher routing, shared context, agent messages, inbox,
+and trace. Avoid copying CCB internals. Use CCB as an architectural reference
+for boundaries: project anchor, dispatcher, message lineage, provider adapters,
+inbox, and trace.
