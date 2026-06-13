@@ -1,0 +1,90 @@
+const path = require('node:path');
+const crypto = require('node:crypto');
+
+const ROOT_DIR = path.resolve(__dirname, '..');
+
+function readInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) ? parsed : fallback;
+}
+
+function createToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function loadConfig(env = process.env) {
+  const dataDir = env.SHARETERMINAL_DATA_DIR || path.join(ROOT_DIR, 'data');
+  const cwd = env.SHARETERMINAL_CWD || ROOT_DIR;
+  const npmGlobalDir = env.SHARETERMINAL_NPM_GLOBAL_DIR || '';
+  const opencodeCommand = env.SHARETERMINAL_OPENCODE_COMMAND ||
+    (npmGlobalDir ? path.join(npmGlobalDir, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe') : 'opencode');
+  const claudeCommand = env.SHARETERMINAL_CLAUDE_COMMAND ||
+    (npmGlobalDir ? path.join(npmGlobalDir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe') : 'claude');
+
+  return {
+    rootDir: ROOT_DIR,
+    host: env.SHARETERMINAL_HOST || '127.0.0.1',
+    port: readInteger(env.SHARETERMINAL_PORT, 7842),
+    token: env.SHARETERMINAL_TOKEN || createToken(),
+    shell: env.SHARETERMINAL_SHELL || 'powershell.exe',
+    cwd,
+    publicDir: env.SHARETERMINAL_PUBLIC_DIR || path.join(ROOT_DIR, 'public'),
+    dataDir,
+    transcriptDir: env.SHARETERMINAL_TRANSCRIPT_DIR || path.join(dataDir, 'transcripts'),
+    conversationDir: env.SHARETERMINAL_CONVERSATION_DIR || path.join(dataDir, 'conversations'),
+    profiles: {
+      main: {
+        label: 'PowerShell',
+        command: 'powershell.exe',
+        args: ['-NoLogo'],
+        cwd
+      },
+      opencode: {
+        label: 'opencode',
+        command: 'powershell.exe',
+        args: ['-NoLogo', '-NoExit', '-Command', 'opencode'],
+        cwd
+      },
+      claude: {
+        label: 'Claude Code',
+        command: 'powershell.exe',
+        args: ['-NoLogo', '-NoExit', '-Command', 'claude'],
+        cwd
+      }
+    },
+    agentProfiles: {
+      echo: {
+        label: 'Echo Test',
+        mode: 'echo'
+      },
+      opencode: {
+        label: 'opencode',
+        mode: 'command',
+        command: opencodeCommand,
+        args: ['run', '--pure', '--format', 'json', '--title', 'shareterminal-direct'],
+        cwd,
+        promptMode: 'arg',
+        sessionArg: '--session',
+        stateKey: 'opencodeSessionId',
+        responseFormat: 'opencode-json',
+        usePty: true,
+        cols: 10000
+      },
+      claude: {
+        label: 'Claude Code',
+        mode: 'command',
+        command: claudeCommand,
+        args: ['-p'],
+        cwd,
+        promptMode: 'arg',
+        responseFormat: 'text'
+      }
+    }
+  };
+}
+
+module.exports = {
+  ROOT_DIR,
+  createToken,
+  loadConfig
+};

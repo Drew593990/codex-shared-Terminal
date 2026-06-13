@@ -1,0 +1,26 @@
+{
+  "name": "shareterminal",
+  "version": "0.1.0",
+  "description": "Local browser shared terminal for user and agent CLI collaboration.",
+  "main": "server/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Drew593990/codex-shared-Terminal.git"
+  },
+  "license": "MIT",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test",
+    "check": "node --check server/index.js && node --check server/config.js && node --check server/session-manager.js && node --check server/transcript-store.js && node --check server/conversation-store.js && node --check server/agent-adapter.js && node --check server/web-server.js && node --check public/app.js"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "express": "^5.2.1",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

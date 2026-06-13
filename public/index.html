@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ShareTerminal</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/vendor/xterm/xterm.css">
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="bar">
+        <div class="identity">
+          <span class="name">ShareTerminal</span>
+          <select id="session-select" class="session-select" aria-label="Session profile"></select>
+          <span id="session" class="session">main</span>
+        </div>
+        <div class="actions">
+          <span id="status" class="status">connecting</span>
+          <button id="toggle-conversation" class="conversation-toggle" type="button" aria-expanded="false" aria-controls="conversation-panel">Direct</button>
+          <button id="reconnect" type="button">Reconnect</button>
+          <button id="clear" type="button">Clear</button>
+        </div>
+      </header>
+      <section class="workspace">
+        <section id="terminal" class="terminal" aria-label="Shared terminal"></section>
+        <aside id="conversation-panel" class="conversation" aria-label="Direct conversation">
+          <div class="conversation-toolbar">
+            <select id="agent-select" class="agent-select" aria-label="Agent"></select>
+            <input id="conversation-id" class="conversation-id" aria-label="Conversation ID" autocomplete="off" spellcheck="false">
+          </div>
+          <textarea id="agent-prompt" class="agent-prompt" aria-label="Prompt" rows="4"></textarea>
+          <div class="conversation-toolbar">
+            <input id="api-token" class="api-token" aria-label="API token" type="password" autocomplete="off">
+            <button id="send-agent" type="button">Send</button>
+          </div>
+          <div id="agent-status" class="agent-status" aria-live="polite"></div>
+          <section id="conversation-history" class="conversation-history" aria-label="Conversation history"></section>
+        </aside>
+      </section>
+    </main>
+    <script src="/vendor/xterm/xterm.js"></script>
+    <script src="/vendor/xterm/addon-fit.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+node_modules/
+data/
+.tmp/
+.node-gyp/
+npm-cache/
+*.log
+docs/superpowers/
