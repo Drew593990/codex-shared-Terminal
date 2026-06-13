@@ -136,19 +136,28 @@ async function runDirectTeamTask({ teamStore, agentAdapter, sessionManager, task
     mode: 'direct'
   });
   await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', runningTask);
-  const result = await agentAdapter.runTurn(agent.profileId, {
-    prompt: task.prompt,
-    conversation: null,
-    task,
-    agent
-  });
-  const completedTask = await teamStore.completeTask(task.taskId, {
-    agentId: agent.agentId,
-    result: result.reply || result.error || '',
-    turnId: result.turnId || null
-  });
-  await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', completedTask);
-  return completedTask;
+  try {
+    const result = await agentAdapter.runTurn(agent.profileId, {
+      prompt: task.prompt,
+      conversation: null,
+      task,
+      agent
+    });
+    const completedTask = await teamStore.completeTask(task.taskId, {
+      agentId: agent.agentId,
+      result: result.reply || result.error || '',
+      turnId: result.turnId || null
+    });
+    await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', completedTask);
+    return completedTask;
+  } catch (error) {
+    const failedTask = await teamStore.failTask(task.taskId, {
+      agentId: agent.agentId,
+      error: error.message
+    });
+    await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', failedTask);
+    throw error;
+  }
 }
 
 async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, task, leaderAgent, workerAgents, terminalSession }) {
@@ -328,6 +337,28 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     }
   });
 
+  app.post('/api/team/tasks/:taskId/cancel', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const task = await teamStore.cancelTask(request.params.taskId, request.body || {});
+      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || 'main', task);
+      response.json({ ok: true, task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/tasks/:taskId/retry', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const task = await teamStore.retryTask(request.params.taskId, request.body || {});
+      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || 'main', task);
+      response.json({ ok: true, task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/team/tasks/:taskId/dispatch', requireToken(config.token), async (request, response, next) => {
     let runningTask = null;
     let dispatchAgent = null;
@@ -408,6 +439,25 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     try {
       requireTeamStore(teamStore);
       response.json({ trace: await teamStore.trace(request.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/team/inbox', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      response.json({ items: await teamStore.listInbox({ status: request.query.status }) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/inbox/:inboxId/ack', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const item = await teamStore.ackInboxItem(request.params.inboxId, request.body || {});
+      response.json({ ok: true, item });
     } catch (error) {
       next(error);
     }

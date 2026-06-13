@@ -23,6 +23,7 @@
   const sendTeamTaskButton = document.getElementById('send-team-task');
   const refreshTeamButton = document.getElementById('refresh-team');
   const teamTasks = document.getElementById('team-tasks');
+  const teamInbox = document.getElementById('team-inbox');
   const teamTrace = document.getElementById('team-trace');
   const teamMessages = document.getElementById('team-messages');
   let session = new URLSearchParams(window.location.search).get('session') || 'main';
@@ -309,6 +310,22 @@
       dispatchTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
     });
 
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Cancel';
+    cancel.disabled = !['queued', 'running'].includes(task.status);
+    cancel.addEventListener('click', () => {
+      cancelTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = 'Retry';
+    retry.disabled = !['failed', 'cancelled'].includes(task.status);
+    retry.addEventListener('click', () => {
+      retryTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
     const trace = document.createElement('button');
     trace.type = 'button';
     trace.textContent = 'Trace';
@@ -317,13 +334,66 @@
     });
 
     main.append(title, status);
-    actions.append(dispatch, trace);
+    actions.append(dispatch, cancel, retry, trace);
     item.append(main, meta);
     if (task.result) {
       item.append(result);
     }
     item.append(actions);
     return item;
+  }
+
+  function renderInboxItem(item) {
+    const row = document.createElement('article');
+    row.className = 'team-inbox-item';
+    row.dataset.status = item.status || '';
+
+    const main = document.createElement('div');
+    main.className = 'team-task-main';
+
+    const title = document.createElement('div');
+    title.className = 'team-task-title';
+    title.textContent = item.title || item.taskId || item.inboxId;
+
+    const status = document.createElement('div');
+    status.className = 'team-agent-role';
+    status.textContent = item.status || 'unread';
+
+    const summary = document.createElement('div');
+    summary.className = 'team-task-result';
+    summary.textContent = item.summary || '';
+
+    const meta = document.createElement('div');
+    meta.className = 'team-task-meta';
+    meta.textContent = `${item.inboxId} | ${item.taskId || ''} | ${item.taskStatus || ''}`;
+
+    const actions = document.createElement('div');
+    actions.className = 'conversation-toolbar';
+
+    const ack = document.createElement('button');
+    ack.type = 'button';
+    ack.textContent = 'Ack';
+    ack.disabled = item.status === 'acked';
+    ack.addEventListener('click', () => {
+      ackInboxItem(item).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const trace = document.createElement('button');
+    trace.type = 'button';
+    trace.textContent = 'Trace';
+    trace.disabled = !item.taskId;
+    trace.addEventListener('click', () => {
+      loadTeamTrace(item.taskId).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    main.append(title, status);
+    actions.append(ack, trace);
+    row.append(main, meta);
+    if (item.summary) {
+      row.append(summary);
+    }
+    row.append(actions);
+    return row;
   }
 
   function renderTraceEvent(event) {
@@ -404,7 +474,10 @@
     syncAgentPanes(rosterBody.roster);
     lastTeamSignature = signature;
     setTeamStatus(`${rosterBody.roster.filter((agent) => agent.status !== 'removed').length} agents`, 'ok');
-    await loadTeamTasks({ silent: true });
+    await Promise.all([
+      loadTeamTasks({ silent: true }),
+      loadTeamInbox({ silent: true })
+    ]);
   }
 
   async function addTeamAgent() {
@@ -485,6 +558,18 @@
     teamTasks.replaceChildren(...body.tasks.slice(-8).reverse().map(renderTeamTask));
   }
 
+  async function loadTeamInbox(options = {}) {
+    const response = await fetch('/api/team/inbox');
+    const body = await response.json();
+    if (!response.ok) {
+      if (!options.silent) {
+        setTeamStatus(body.error || `inbox ${response.status}`, 'error');
+      }
+      return;
+    }
+    teamInbox.replaceChildren(...body.items.slice(-6).reverse().map(renderInboxItem));
+  }
+
   async function dispatchTeamTask(task) {
     setTeamStatus(`running ${task.taskId}`, 'running');
     const response = await fetch(`/api/team/tasks/${encodeURIComponent(task.taskId)}/dispatch`, {
@@ -498,9 +583,61 @@
       return;
     }
     setTeamStatus(`${body.task.status} ${body.task.taskId}`, body.task.status === 'failed' ? 'error' : 'ok');
+    await Promise.all([loadTeamTasks(), loadTeamInbox()]);
+    await loadTeamState({ silent: true });
+    await loadTeamTrace(body.task.taskId);
+  }
+
+  async function cancelTeamTask(task) {
+    setTeamStatus(`cancelling ${task.taskId}`, 'running');
+    const response = await fetch(`/api/team/tasks/${encodeURIComponent(task.taskId)}/cancel`, {
+      method: 'POST',
+      headers: teamHeaders(),
+      body: JSON.stringify({ terminalSession: session, reason: 'cancelled from browser' })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setTeamStatus(body.error || `cancel ${response.status}`, 'error');
+      return;
+    }
+    setTeamStatus(`${body.task.status} ${body.task.taskId}`, 'ok');
     await loadTeamTasks();
     await loadTeamState({ silent: true });
     await loadTeamTrace(body.task.taskId);
+  }
+
+  async function retryTeamTask(task) {
+    setTeamStatus(`retrying ${task.taskId}`, 'running');
+    const response = await fetch(`/api/team/tasks/${encodeURIComponent(task.taskId)}/retry`, {
+      method: 'POST',
+      headers: teamHeaders(),
+      body: JSON.stringify({ terminalSession: session, createdBy: 'browser', reason: 'retry from browser' })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setTeamStatus(body.error || `retry ${response.status}`, 'error');
+      return;
+    }
+    setTeamStatus(`queued ${body.task.taskId}`, 'ok');
+    await loadTeamTasks();
+    await loadTeamState({ silent: true });
+    await loadTeamTrace(task.taskId);
+  }
+
+  async function ackInboxItem(item) {
+    setTeamStatus(`acking ${item.inboxId}`, 'running');
+    const response = await fetch(`/api/team/inbox/${encodeURIComponent(item.inboxId)}/ack`, {
+      method: 'POST',
+      headers: teamHeaders(),
+      body: JSON.stringify({ ackedBy: 'browser' })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setTeamStatus(body.error || `ack ${response.status}`, 'error');
+      return;
+    }
+    setTeamStatus(`acked ${body.item.inboxId}`, 'ok');
+    await loadTeamInbox();
   }
 
   async function loadTeamTrace(taskId) {

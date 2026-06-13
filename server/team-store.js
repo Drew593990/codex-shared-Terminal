@@ -61,12 +61,20 @@ function publicProfile(profileId, profile = {}) {
   };
 }
 
+function compactSummary(value, limit = 700) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit);
+}
+
 class TeamStore {
   constructor(rootDir, options = {}) {
     this.rootDir = rootDir;
     this.now = options.now || (() => new Date().toISOString());
     this.taskIdFactory = options.taskIdFactory || (() => defaultId('task'));
     this.messageIdFactory = options.messageIdFactory || (() => defaultId('message'));
+    this.inboxIdFactory = options.inboxIdFactory || (() => defaultId('inbox'));
     this.profiles = options.profiles || {};
   }
 
@@ -236,6 +244,7 @@ class TeamStore {
       leaderAgentId: input.leaderAgentId || leader?.agentId || null,
       rosterId: input.rosterId || 'default',
       parentTaskId: input.parentTaskId || null,
+      retryOf: input.retryOf || null,
       status: input.status || 'queued',
       mentions,
       childTaskIds: [],
@@ -389,6 +398,50 @@ class TeamStore {
     return updated;
   }
 
+  async createInboxItem(task, input = {}) {
+    const inboxItem = {
+      inboxId: input.inboxId || this.inboxIdFactory(),
+      type: input.type || 'task_result',
+      taskId: task.taskId,
+      parentTaskId: task.parentTaskId || null,
+      agentId: input.agentId || task.reviewedBy || task.leaderAgentId || null,
+      status: input.status || 'unread',
+      taskStatus: task.status,
+      title: task.title,
+      summary: compactSummary(input.summary || task.result || task.error || ''),
+      createdAt: this.now(),
+      ackedAt: null,
+      ackedBy: null
+    };
+    await appendJsonLine(this.file('inbox'), inboxItem);
+    return inboxItem;
+  }
+
+  async listInbox(filter = {}) {
+    const items = latestBy(await readJsonLines(this.file('inbox')), 'inboxId')
+      .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
+    if (!filter.status) {
+      return items;
+    }
+    return items.filter((item) => item.status === filter.status);
+  }
+
+  async ackInboxItem(inboxId, input = {}) {
+    const safeInboxId = safeId(inboxId, 'inboxId');
+    const previous = (await this.listInbox()).find((item) => item.inboxId === safeInboxId);
+    if (!previous) {
+      throw new Error(`Unknown inbox item: ${safeInboxId}`);
+    }
+    const updated = {
+      ...previous,
+      status: 'acked',
+      ackedAt: this.now(),
+      ackedBy: input.ackedBy || 'user'
+    };
+    await appendJsonLine(this.file('inbox'), updated);
+    return updated;
+  }
+
   async completeTask(taskId, input = {}) {
     const task = await this.getTask(taskId);
     if (!task) {
@@ -421,6 +474,7 @@ class TeamStore {
       agentId,
       data: { turnId: input.turnId || null, result: updated.result }
     });
+    await this.createInboxItem(updated, { agentId, summary: updated.result });
     return updated;
   }
 
@@ -443,7 +497,65 @@ class TeamStore {
       agentId,
       data: { error: updated.error }
     });
+    await this.createInboxItem(updated, {
+      agentId,
+      type: 'task_failure',
+      summary: updated.error
+    });
     return updated;
+  }
+
+  async cancelTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    if (['completed', 'failed', 'cancelled'].includes(task.status)) {
+      throw new Error(`Task is already closed: ${task.taskId}`);
+    }
+    const agentId = input.agentId || task.leaderAgentId;
+    const updated = await this.updateTask(task.taskId, {
+      status: 'cancelled',
+      error: String(input.reason || input.error || 'task cancelled')
+    });
+    if (agentId) {
+      await this.updateRosterAgent(agentId, { status: 'idle', activeTaskId: null });
+    }
+    await this.appendEvent({
+      type: 'task.cancelled',
+      taskId: task.taskId,
+      agentId,
+      data: { reason: updated.error }
+    });
+    return updated;
+  }
+
+  async retryTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    if (!['failed', 'cancelled'].includes(task.status)) {
+      throw new Error(`Task is not retryable: ${task.taskId}`);
+    }
+    const retry = await this.createTask({
+      title: input.title || task.title,
+      prompt: input.prompt || task.prompt,
+      createdBy: input.createdBy || 'user',
+      assignedTo: input.assignedTo || task.assignedTo,
+      leaderAgentId: input.leaderAgentId || task.leaderAgentId,
+      rosterId: input.rosterId || task.rosterId,
+      parentTaskId: input.parentTaskId || task.parentTaskId || null,
+      retryOf: task.taskId,
+      status: 'queued'
+    });
+    await this.appendEvent({
+      type: 'task.retry.created',
+      taskId: task.taskId,
+      agentId: retry.leaderAgentId,
+      data: { retryTaskId: retry.taskId, reason: input.reason || null }
+    });
+    return retry;
   }
 
   async listMessages(filter = {}) {
@@ -494,8 +606,12 @@ class TeamStore {
   async trace(id) {
     const safeTraceId = safeId(id, 'trace id');
     const task = await this.getTask(safeTraceId);
+    const allTasks = await this.listTasks();
     const childTasks = task
       ? (await Promise.all((task.childTaskIds || []).map((childTaskId) => this.getTask(childTaskId)))).filter(Boolean)
+      : [];
+    const retryTasks = task
+      ? allTasks.filter((item) => item.retryOf === task.taskId)
       : [];
     const taskIds = new Set([safeTraceId, ...childTasks.map((child) => child.taskId)]);
     const events = (await readJsonLines(this.file('events')))
@@ -504,7 +620,7 @@ class TeamStore {
     return {
       id: safeTraceId,
       task,
-      tasks: [task, ...childTasks].filter(Boolean),
+      tasks: [task, ...childTasks, ...retryTasks].filter(Boolean),
       events
     };
   }

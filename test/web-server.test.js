@@ -593,6 +593,206 @@ test('team dispatch API runs the assigned direct agent and exposes trace', async
   }
 });
 
+test('team inbox API exposes completed results and supports ack', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => 'task-inbox-1',
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-inbox-${++index}`;
+    })(),
+    inboxIdFactory: () => 'inbox-api-1'
+  });
+  const manager = createFakeManager();
+  const agentAdapter = createFakeAgentAdapter();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await teamStore.createTask({
+      title: 'Inbox through echo',
+      prompt: '@leader produce an inbox result',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    await fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+
+    const inboxResponse = await fetch(`${base}/api/team/inbox`);
+    const inboxBody = await inboxResponse.json();
+    assert.equal(inboxResponse.status, 200);
+    assert.equal(inboxBody.items.length, 1);
+    assert.equal(inboxBody.items[0].inboxId, 'inbox-api-1');
+    assert.equal(inboxBody.items[0].taskId, task.taskId);
+    assert.equal(inboxBody.items[0].status, 'unread');
+
+    const ackResponse = await fetch(`${base}/api/team/inbox/inbox-api-1/ack`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ ackedBy: 'user' })
+    });
+    const ackBody = await ackResponse.json();
+    assert.equal(ackResponse.status, 200);
+    assert.equal(ackBody.item.status, 'acked');
+    assert.equal(ackBody.item.ackedBy, 'user');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('team task API cancels queued work and creates retry tasks', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-recover-${++taskIndex}`,
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-recover-${++index}`;
+    })()
+  });
+  const manager = createFakeManager();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await teamStore.createTask({
+      title: 'Retry through API',
+      prompt: '@leader do work later',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    const cancelResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/cancel`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'echo1', reason: 'user stopped the task' })
+    });
+    const cancelBody = await cancelResponse.json();
+    assert.equal(cancelResponse.status, 200);
+    assert.equal(cancelBody.task.status, 'cancelled');
+
+    const retryResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ createdBy: 'codex', reason: 'retry after cancellation' })
+    });
+    const retryBody = await retryResponse.json();
+    assert.equal(retryResponse.status, 200);
+    assert.equal(retryBody.task.taskId, 'task-recover-2');
+    assert.equal(retryBody.task.retryOf, task.taskId);
+    assert.equal(retryBody.task.status, 'queued');
+
+    const traceResponse = await fetch(`${base}/api/team/trace/${task.taskId}`);
+    const traceBody = await traceResponse.json();
+    assert.equal(traceResponse.status, 200);
+    assert.deepEqual(traceBody.trace.events.map((event) => event.type).slice(-2), [
+      'task.cancelled',
+      'task.retry.created'
+    ]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('team dispatch marks failed agent runs as retryable inbox items', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => 'task-failure-1',
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-failure-${++index}`;
+    })(),
+    inboxIdFactory: () => 'inbox-failure-1'
+  });
+  const manager = createFakeManager();
+  const agentAdapter = {
+    listAgents: () => [{ name: 'echo', label: 'Echo', mode: 'echo' }],
+    runTurn: async () => {
+      throw new Error('adapter exploded');
+    }
+  };
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await teamStore.createTask({
+      title: 'Fail through echo',
+      prompt: '@leader fail and recover',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    const dispatchResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+    const dispatchBody = await dispatchResponse.json();
+    assert.equal(dispatchResponse.status, 500);
+    assert.equal(dispatchBody.error, 'adapter exploded');
+
+    const failedTask = await teamStore.getTask(task.taskId);
+    assert.equal(failedTask.status, 'failed');
+    assert.equal(failedTask.error, 'adapter exploded');
+
+    const inboxResponse = await fetch(`${base}/api/team/inbox`);
+    const inboxBody = await inboxResponse.json();
+    assert.equal(inboxResponse.status, 200);
+    assert.equal(inboxBody.items[0].type, 'task_failure');
+    assert.equal(inboxBody.items[0].taskId, task.taskId);
+    assert.equal(inboxBody.items[0].summary, 'adapter exploded');
+
+    const traceResponse = await fetch(`${base}/api/team/trace/${task.taskId}`);
+    const traceBody = await traceResponse.json();
+    assert.deepEqual(traceBody.trace.events.map((event) => event.type).slice(-2), [
+      'task.running',
+      'task.failed'
+    ]);
+    assert.match(manager.systemMessages.at(-1).data, /\[team failed\] task-failure-1/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team dispatch splits mentioned workers and returns leader final delivery', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   let taskIndex = 0;

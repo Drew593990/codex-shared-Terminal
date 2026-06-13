@@ -158,6 +158,92 @@ test('TeamStore records task lifecycle events for dispatch tracing', async () =>
   }
 });
 
+test('TeamStore writes completed task results into an ackable inbox', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    const store = new TeamStore(root, {
+      now: createClock(),
+      taskIdFactory: () => 'task-1',
+      messageIdFactory: () => 'message-1',
+      inboxIdFactory: () => 'inbox-1'
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const queued = await store.createTask({
+      title: 'Inbox delivery',
+      prompt: '@leader produce result',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    await store.startTask(queued.taskId, { agentId: 'echo1', mode: 'direct' });
+    await store.completeTask(queued.taskId, {
+      agentId: 'echo1',
+      result: 'checked final result',
+      turnId: 'turn-1'
+    });
+
+    const inbox = await store.listInbox();
+    assert.equal(inbox.length, 1);
+    assert.equal(inbox[0].inboxId, 'inbox-1');
+    assert.equal(inbox[0].taskId, queued.taskId);
+    assert.equal(inbox[0].status, 'unread');
+    assert.equal(inbox[0].summary, 'checked final result');
+
+    const acked = await store.ackInboxItem('inbox-1', { ackedBy: 'user' });
+    assert.equal(acked.status, 'acked');
+    assert.equal(acked.ackedBy, 'user');
+
+    const afterAck = await store.listInbox();
+    assert.equal(afterAck[0].status, 'acked');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('TeamStore cancels queued work and creates traceable retries', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    let taskIndex = 0;
+    const store = new TeamStore(root, {
+      now: createClock(),
+      taskIdFactory: () => `task-${++taskIndex}`,
+      messageIdFactory: () => `message-${taskIndex}`
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const queued = await store.createTask({
+      title: 'Recoverable task',
+      prompt: '@leader do recoverable work',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    const cancelled = await store.cancelTask(queued.taskId, {
+      agentId: 'echo1',
+      reason: 'user paused the work'
+    });
+    const retry = await store.retryTask(queued.taskId, {
+      createdBy: 'codex',
+      reason: 'resume after pause'
+    });
+    const trace = await store.trace(queued.taskId);
+
+    assert.equal(cancelled.status, 'cancelled');
+    assert.equal(cancelled.error, 'user paused the work');
+    assert.equal(retry.taskId, 'task-2');
+    assert.equal(retry.retryOf, queued.taskId);
+    assert.equal(retry.status, 'queued');
+    assert.equal(retry.prompt, queued.prompt);
+    assert.equal(retry.assignedTo, queued.assignedTo);
+    assert.deepEqual(trace.events.map((event) => event.type).slice(-2), [
+      'task.cancelled',
+      'task.retry.created'
+    ]);
+    assert.equal(trace.tasks.find((task) => task.taskId === retry.taskId).retryOf, queued.taskId);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TeamStore creates child tasks and includes them in parent trace', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
   try {
