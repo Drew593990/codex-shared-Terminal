@@ -674,6 +674,17 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     response.status(error.statusCode || 500).json({ ok: false, error: error.message });
   });
 
+  async function ensureRosterSessionProfile(sessionName) {
+    if (!teamStore || typeof sessionManager.getOrCreateWithProfile !== 'function') {
+      return;
+    }
+    const roster = await teamStore.listRoster();
+    const agent = roster.find((item) => item.status !== 'removed' && (item.session || item.agentId) === sessionName);
+    if (agent) {
+      sessionManager.getOrCreateWithProfile(agent.session || agent.agentId, agent.profileId);
+    }
+  }
+
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
     if (url.pathname !== '/ws') {
@@ -685,19 +696,27 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     });
   });
 
-  wss.on('connection', (ws, request, url) => {
+  wss.on('connection', async (ws, request, url) => {
     const sessionName = url.searchParams.get('session') || 'main';
-    const unsubscribe = sessionManager.subscribe(sessionName, (data) => {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'output', data }));
-      }
-    });
+    let unsubscribe = () => {};
+    try {
+      await ensureRosterSessionProfile(sessionName);
+      unsubscribe = sessionManager.subscribe(sessionName, (data) => {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'output', data }));
+        }
+      });
 
-    ws.send(JSON.stringify({
-      type: 'ready',
-      session: sessionName,
-      sessions: sessionManager.listSessions()
-    }));
+      ws.send(JSON.stringify({
+        type: 'ready',
+        session: sessionName,
+        sessions: sessionManager.listSessions()
+      }));
+    } catch (error) {
+      ws.send(JSON.stringify({ type: 'error', error: error.message }));
+      ws.close();
+      return;
+    }
 
     ws.on('message', async (raw) => {
       let message;

@@ -3,6 +3,7 @@ const { mkdtemp, rm } = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const WebSocket = require('ws');
 
 const { createWebServer } = require('../server/web-server');
 const { TeamStore } = require('../server/team-store');
@@ -956,6 +957,63 @@ test('team claimed task API records claimant failure for retry', async () => {
     assert.equal(inboxBody.items[0].type, 'task_failure');
     assert.equal(inboxBody.items[0].summary, 'api worker failure');
     assert.match(manager.systemMessages.at(-1).data, /\[team failed\] task-fail-api-1/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('team WebSocket sessions use roster profile even before roster API is read', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      opencode: { label: 'opencode', mode: 'command' }
+    }
+  });
+  const createdAgentSessions = [];
+  const subscriptions = [];
+  const manager = {
+    listSessions: () => [],
+    getOrCreateWithProfile: (name, profileName) => {
+      createdAgentSessions.push({ name, profileName });
+      return { name, profileName };
+    },
+    subscribe: (name) => {
+      subscriptions.push(name);
+      return () => {};
+    },
+    write: async () => {},
+    resize: () => {},
+    readTranscript: async () => [],
+    publishSystem: async () => {}
+  };
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await teamStore.addRosterAgent({ profileId: 'opencode', agentId: 'opencode1' });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?session=opencode1`);
+    const ready = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('websocket ready timeout')), 1000);
+      socket.on('message', (raw) => {
+        const message = JSON.parse(raw.toString());
+        if (message.type === 'ready') {
+          clearTimeout(timeout);
+          resolve(message);
+        }
+      });
+      socket.on('error', reject);
+    });
+    socket.close();
+
+    assert.equal(ready.session, 'opencode1');
+    assert.deepEqual(createdAgentSessions, [{ name: 'opencode1', profileName: 'opencode' }]);
+    assert.deepEqual(subscriptions, ['opencode1']);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });
