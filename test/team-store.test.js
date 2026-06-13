@@ -157,3 +157,50 @@ test('TeamStore records task lifecycle events for dispatch tracing', async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('TeamStore creates child tasks and includes them in parent trace', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    let taskIndex = 0;
+    const store = new TeamStore(root, {
+      now: createClock(),
+      taskIdFactory: () => `task-${++taskIndex}`,
+      messageIdFactory: () => `message-${taskIndex}`
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const parent = await store.createTask({
+      title: 'Team parent',
+      prompt: '@team ask @echo2 to inspect and then deliver',
+      createdBy: 'codex',
+      assignedTo: '@team'
+    });
+
+    const child = await store.createChildTask(parent.taskId, {
+      title: 'Worker inspect',
+      prompt: 'Inspect for parent',
+      assignedTo: 'echo2',
+      createdBy: 'echo1'
+    });
+    await store.startTask(child.taskId, { agentId: 'echo2', mode: 'direct' });
+    await store.completeTask(child.taskId, { agentId: 'echo2', result: 'worker result' });
+
+    const updatedParent = await store.getTask(parent.taskId);
+    const trace = await store.trace(parent.taskId);
+
+    assert.equal(child.parentTaskId, parent.taskId);
+    assert.deepEqual(updatedParent.childTaskIds, [child.taskId]);
+    assert.deepEqual(trace.events.map((event) => event.type), [
+      'task.created',
+      'message.sent',
+      'task.created',
+      'message.sent',
+      'task.child.created',
+      'task.running',
+      'task.completed'
+    ]);
+    assert.equal(trace.tasks.length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

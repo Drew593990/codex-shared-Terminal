@@ -333,10 +333,15 @@ button:hover {
 .team-agent-meta,
 .team-message-body,
 .team-task-meta,
+.team-task-result,
 .team-trace-data {
   color: #aeb7c2;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.team-task-result {
+  color: #9fd3c7;
 }
 
 .team-task button {

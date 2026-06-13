@@ -235,6 +235,7 @@ class TeamStore {
       assignedTo: input.assignedTo || '@leader',
       leaderAgentId: input.leaderAgentId || leader?.agentId || null,
       rosterId: input.rosterId || 'default',
+      parentTaskId: input.parentTaskId || null,
       status: input.status || 'queued',
       mentions,
       childTaskIds: [],
@@ -267,6 +268,29 @@ class TeamStore {
       });
     }
     return task;
+  }
+
+  async createChildTask(parentTaskId, input = {}) {
+    const parent = await this.getTask(parentTaskId);
+    if (!parent) {
+      throw new Error(`Unknown task: ${parentTaskId}`);
+    }
+    const child = await this.createTask({
+      ...input,
+      parentTaskId: parent.taskId,
+      leaderAgentId: parent.leaderAgentId,
+      rosterId: parent.rosterId
+    });
+    const latestParent = await this.getTask(parent.taskId);
+    const childTaskIds = [...(latestParent.childTaskIds || []), child.taskId];
+    await this.updateTask(parent.taskId, { childTaskIds });
+    await this.appendEvent({
+      type: 'task.child.created',
+      taskId: parent.taskId,
+      agentId: child.assignedTo,
+      data: { childTaskId: child.taskId, assignedTo: child.assignedTo }
+    });
+    return child;
   }
 
   resolveMessageTarget(to) {
@@ -470,12 +494,17 @@ class TeamStore {
   async trace(id) {
     const safeTraceId = safeId(id, 'trace id');
     const task = await this.getTask(safeTraceId);
+    const childTasks = task
+      ? (await Promise.all((task.childTaskIds || []).map((childTaskId) => this.getTask(childTaskId)))).filter(Boolean)
+      : [];
+    const taskIds = new Set([safeTraceId, ...childTasks.map((child) => child.taskId)]);
     const events = (await readJsonLines(this.file('events')))
-      .filter((event) => event.taskId === safeTraceId || event.messageId === safeTraceId)
+      .filter((event) => taskIds.has(event.taskId) || event.messageId === safeTraceId)
       .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
     return {
       id: safeTraceId,
       task,
+      tasks: [task, ...childTasks].filter(Boolean),
       events
     };
   }

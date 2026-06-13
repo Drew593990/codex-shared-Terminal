@@ -592,3 +592,67 @@ test('team dispatch API runs the assigned direct agent and exposes trace', async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('team dispatch splits mentioned workers and returns leader final delivery', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-team-${++taskIndex}`,
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-team-${++index}`;
+    })()
+  });
+  const manager = createFakeManager();
+  const agentAdapter = createFakeAgentAdapter();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const task = await teamStore.createTask({
+      title: 'Team split delivery',
+      prompt: '@team ask @echo2 to inspect the code, then produce one checked delivery',
+      createdBy: 'codex',
+      assignedTo: '@team'
+    });
+
+    const dispatchResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+    const dispatchBody = await dispatchResponse.json();
+
+    assert.equal(dispatchResponse.status, 200);
+    assert.equal(dispatchBody.task.status, 'completed');
+    assert.equal(dispatchBody.task.reviewedBy, 'echo1');
+    assert.equal(dispatchBody.task.reviewStatus, 'checked');
+    assert.match(dispatchBody.task.result, /Final delivery/);
+    assert.match(dispatchBody.task.result, /echo2/);
+    assert.deepEqual(agentAdapter.calls.map((call) => call.input.agent.agentId), ['echo2', 'echo1']);
+
+    const traceResponse = await fetch(`${base}/api/team/trace/${task.taskId}`);
+    const traceBody = await traceResponse.json();
+    assert.equal(traceResponse.status, 200);
+    assert.equal(traceBody.trace.tasks.length, 2);
+    assert.deepEqual(traceBody.trace.events.map((event) => event.type).filter((type) => type === 'task.completed'), [
+      'task.completed',
+      'task.completed'
+    ]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});

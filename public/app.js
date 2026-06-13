@@ -161,7 +161,6 @@
 
   function refitTerminal() {
     window.requestAnimationFrame(() => {
-      fitAddon.fit();
       sendResize();
     });
   }
@@ -295,6 +294,10 @@
     meta.className = 'team-task-meta';
     meta.textContent = `${task.taskId} | leader ${task.leaderAgentId || 'none'} | ${task.assignedTo || ''}`;
 
+    const result = document.createElement('div');
+    result.className = 'team-task-result';
+    result.textContent = task.result ? task.result.slice(0, 360) : '';
+
     const actions = document.createElement('div');
     actions.className = 'conversation-toolbar';
 
@@ -315,7 +318,11 @@
 
     main.append(title, status);
     actions.append(dispatch, trace);
-    item.append(main, meta, actions);
+    item.append(main, meta);
+    if (task.result) {
+      item.append(result);
+    }
+    item.append(actions);
     return item;
   }
 
@@ -609,7 +616,6 @@
   }
 
   window.addEventListener('resize', () => {
-    fitAddon.fit();
     sendResize();
   });
 

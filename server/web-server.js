@@ -123,6 +123,93 @@ async function resolveDispatchAgent(teamStore, task) {
   return agent;
 }
 
+function mentionedRosterAgents(task, roster) {
+  const mentionIds = new Set((task.mentions || [])
+    .map((mention) => mention.replace(/^@/, ''))
+    .filter((mention) => mention && !['team', 'leader'].includes(mention)));
+  return roster.filter((agent) => mentionIds.has(agent.agentId) && agent.status !== 'removed');
+}
+
+async function runDirectTeamTask({ teamStore, agentAdapter, sessionManager, task, agent, terminalSession }) {
+  const runningTask = await teamStore.startTask(task.taskId, {
+    agentId: agent.agentId,
+    mode: 'direct'
+  });
+  await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', runningTask);
+  const result = await agentAdapter.runTurn(agent.profileId, {
+    prompt: task.prompt,
+    conversation: null,
+    task,
+    agent
+  });
+  const completedTask = await teamStore.completeTask(task.taskId, {
+    agentId: agent.agentId,
+    result: result.reply || result.error || '',
+    turnId: result.turnId || null
+  });
+  await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', completedTask);
+  return completedTask;
+}
+
+async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, task, leaderAgent, workerAgents, terminalSession }) {
+  const runningParent = await teamStore.startTask(task.taskId, {
+    agentId: leaderAgent.agentId,
+    mode: 'team'
+  });
+  await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', runningParent);
+
+  const workerResults = [];
+  for (const worker of workerAgents) {
+    const childTask = await teamStore.createChildTask(task.taskId, {
+      title: `${worker.agentId}: ${task.title}`,
+      prompt: `Parent task ${task.taskId}\nAssigned agent: @${worker.agentId}\n\n${task.prompt}`,
+      assignedTo: worker.agentId,
+      createdBy: leaderAgent.agentId
+    });
+    const completedChild = await runDirectTeamTask({
+      teamStore,
+      agentAdapter,
+      sessionManager,
+      task: childTask,
+      agent: worker,
+      terminalSession: worker.session
+    });
+    workerResults.push({
+      agentId: worker.agentId,
+      taskId: childTask.taskId,
+      result: completedChild.result || ''
+    });
+  }
+
+  const finalPrompt = [
+    `Final delivery for task ${task.taskId}.`,
+    '',
+    'Original request:',
+    task.prompt,
+    '',
+    'Worker results:',
+    ...workerResults.map((result) => `- @${result.agentId} (${result.taskId}): ${result.result}`),
+    '',
+    'Check the worker results against the original request and produce one concise final delivery.'
+  ].join('\n');
+  const leaderResult = await agentAdapter.runTurn(leaderAgent.profileId, {
+    prompt: finalPrompt,
+    conversation: null,
+    task,
+    agent: leaderAgent,
+    workerResults
+  });
+  const completedParent = await teamStore.completeTask(task.taskId, {
+    agentId: leaderAgent.agentId,
+    result: leaderResult.reply || leaderResult.error || finalPrompt,
+    turnId: leaderResult.turnId || null,
+    reviewedBy: leaderAgent.agentId,
+    reviewStatus: 'checked'
+  });
+  await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', completedParent);
+  return completedParent;
+}
+
 function createWebServer({ sessionManager, config, conversationStore, teamStore, agentAdapter }) {
   const app = express();
   const server = http.createServer(app);
@@ -253,24 +340,28 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
         return;
       }
       dispatchAgent = await resolveDispatchAgent(teamStore, task);
-      runningTask = await teamStore.startTask(task.taskId, {
-        agentId: dispatchAgent.agentId,
-        mode: 'direct'
-      });
-      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || dispatchAgent.session || 'main', runningTask);
-
-      const result = await agentAdapter.runTurn(dispatchAgent.profileId, {
-        prompt: task.prompt,
-        conversation: null,
-        task,
-        agent: dispatchAgent
-      });
-      const completedTask = await teamStore.completeTask(task.taskId, {
-        agentId: dispatchAgent.agentId,
-        result: result.reply || result.error || '',
-        turnId: result.turnId || null
-      });
-      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || dispatchAgent.session || 'main', completedTask);
+      const roster = await teamStore.listRoster();
+      const workerAgents = task.assignedTo === '@team'
+        ? mentionedRosterAgents(task, roster).filter((agent) => agent.agentId !== dispatchAgent.agentId)
+        : [];
+      const completedTask = workerAgents.length > 0
+        ? await dispatchSplitTeamTask({
+          teamStore,
+          agentAdapter,
+          sessionManager,
+          task,
+          leaderAgent: dispatchAgent,
+          workerAgents,
+          terminalSession: request.body.terminalSession || request.body.session || dispatchAgent.session || 'main'
+        })
+        : await runDirectTeamTask({
+          teamStore,
+          agentAdapter,
+          sessionManager,
+          task,
+          agent: dispatchAgent,
+          terminalSession: request.body.terminalSession || request.body.session || dispatchAgent.session || 'main'
+        });
       response.json({ ok: true, task: completedTask });
     } catch (error) {
       if (runningTask && dispatchAgent) {
