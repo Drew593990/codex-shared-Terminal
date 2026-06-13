@@ -37,9 +37,17 @@ class SessionManager {
     this.transcriptStore = transcriptStore;
     this.ptyFactory = ptyFactory || createDefaultPtyFactory(this.config);
     this.sessions = new Map();
+    this.sessionProfileOverrides = new Map();
   }
 
   profileFor(sessionName) {
+    const override = this.sessionProfileOverrides.get(sessionName);
+    if (override && this.config.profiles[override]) {
+      return {
+        ...this.config.profiles[override],
+        label: sessionName
+      };
+    }
     return this.config.profiles[sessionName] || {
       ...this.config.profiles.main,
       label: sessionName
@@ -79,6 +87,14 @@ class SessionManager {
 
     this.sessions.set(sessionName, session);
     return session;
+  }
+
+  getOrCreateWithProfile(name, profileName) {
+    const sessionName = safeSessionName(name);
+    if (!this.sessions.has(sessionName)) {
+      this.sessionProfileOverrides.set(sessionName, safeSessionName(profileName));
+    }
+    return this.getOrCreate(sessionName);
   }
 
   listSessions() {

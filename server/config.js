@@ -32,6 +32,7 @@ function loadConfig(env = process.env) {
     dataDir,
     transcriptDir: env.SHARETERMINAL_TRANSCRIPT_DIR || path.join(dataDir, 'transcripts'),
     conversationDir: env.SHARETERMINAL_CONVERSATION_DIR || path.join(dataDir, 'conversations'),
+    teamDir: env.SHARETERMINAL_TEAM_DIR || path.join(dataDir, 'team'),
     profiles: {
       main: {
         label: 'PowerShell',

@@ -5,10 +5,16 @@ const { createWebServer } = require('../server/web-server');
 
 function createFakeManager() {
   const systemMessages = [];
+  const createdAgentSessions = [];
   return {
     systemMessages,
+    createdAgentSessions,
     listSessions() {
       return [{ name: 'main', shell: 'powershell.exe', clients: 0 }];
+    },
+    getOrCreateWithProfile: (name, profileName) => {
+      createdAgentSessions.push({ name, profileName });
+      return { name, profileName };
     },
     readTranscript: async (name) => [{ session: name, direction: 'output', data: 'ready' }],
     write: async (name, input) => ({ name, input }),
@@ -87,6 +93,68 @@ function createFakeAgentAdapter() {
         raw: { mode: 'test' },
         agentState: { opencodeSessionId: 'ses_2' }
       };
+    }
+  };
+}
+
+function createFakeTeamStore() {
+  const roster = [];
+  const messages = [];
+  const tasks = [];
+  return {
+    roster,
+    messages,
+    tasks,
+    listAgentProfiles: async () => [
+      { profileId: 'opencode', label: 'opencode', kind: 'direct', enabled: true },
+      { profileId: 'claude', label: 'Claude Code', kind: 'direct', enabled: true }
+    ],
+    addAgentProfile: async (profile) => ({ enabled: true, ...profile }),
+    listRoster: async () => roster,
+    addRosterAgent: async (input) => {
+      const agent = {
+        agentId: input.agentId || `${input.profileId}${roster.length + 1}`,
+        profileId: input.profileId,
+        role: roster.some((item) => item.role === 'leader') ? (input.role || 'worker') : 'leader',
+        status: 'idle'
+      };
+      roster.push(agent);
+      return agent;
+    },
+    setLeader: async (agentId) => {
+      roster.forEach((agent) => {
+        agent.role = agent.agentId === agentId ? 'leader' : 'worker';
+      });
+      return roster.find((agent) => agent.agentId === agentId);
+    },
+    removeRosterAgent: async (agentId) => {
+      const agent = roster.find((item) => item.agentId === agentId);
+      agent.status = 'removed';
+      return agent;
+    },
+    createTask: async (input) => {
+      const task = {
+        taskId: 'task-api-1',
+        status: 'queued',
+        leaderAgentId: roster.find((agent) => agent.role === 'leader')?.agentId || null,
+        ...input
+      };
+      tasks.push(task);
+      return task;
+    },
+    listTasks: async () => tasks,
+    getTask: async (taskId) => tasks.find((task) => task.taskId === taskId) || null,
+    getContext: async () => ({ roster, activeTasks: tasks }),
+    sendMessage: async (input) => {
+      const message = { messageId: 'message-api-1', status: 'pending', ...input };
+      messages.push(message);
+      return message;
+    },
+    listMessages: async () => messages,
+    markMessageRead: async (messageId) => {
+      const message = messages.find((item) => item.messageId === messageId);
+      message.status = 'read';
+      return message;
     }
   };
 }
@@ -392,6 +460,71 @@ test('POST /api/agents/:agent/turns exposes a running turn while agent is still 
     assert.equal(manager.systemMessages.length, 2);
     assert.match(manager.systemMessages[1].data, /\[opencode completed\] turn-running/);
     assert.match(manager.systemMessages[1].data, /done/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('team APIs expose roster lifecycle, @team tasks, and messages', async () => {
+  const teamStore = createFakeTeamStore();
+  const manager = createFakeManager();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    const addFirst = await fetch(`${base}/api/team/roster/agents`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ profileId: 'opencode', agentId: 'opencode1' })
+    });
+    assert.equal(addFirst.status, 200);
+    const addSecond = await fetch(`${base}/api/team/roster/agents`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ profileId: 'opencode', agentId: 'opencode2' })
+    });
+    assert.equal(addSecond.status, 200);
+    assert.deepEqual(manager.createdAgentSessions, [
+      { name: 'opencode1', profileName: 'opencode' },
+      { name: 'opencode2', profileName: 'opencode' }
+    ]);
+
+    const rosterResponse = await fetch(`${base}/api/team/roster`);
+    const rosterBody = await rosterResponse.json();
+    assert.deepEqual(rosterBody.roster.map((agent) => agent.agentId), ['opencode1', 'opencode2']);
+    assert.equal(rosterBody.roster[0].role, 'leader');
+
+    const taskResponse = await fetch(`${base}/api/team/tasks`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Parser team task',
+        prompt: '@team split work and ask @opencode2 to test',
+        assignedTo: '@team',
+        createdBy: 'codex'
+      })
+    });
+    const taskBody = await taskResponse.json();
+    assert.equal(taskResponse.status, 200);
+    assert.equal(taskBody.task.leaderAgentId, 'opencode1');
+    assert.equal(taskBody.task.assignedTo, '@team');
+    assert.match(manager.systemMessages.at(-1).data, /\[team queued\] task-api-1/);
+
+    const messageResponse = await fetch(`${base}/api/team/messages`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ from: 'codex', to: '@leader', body: '@leader check the final delivery' })
+    });
+    const messageBody = await messageResponse.json();
+    assert.equal(messageResponse.status, 200);
+    assert.equal(messageBody.message.to, '@leader');
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

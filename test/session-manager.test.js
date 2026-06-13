@@ -133,3 +133,32 @@ test('SessionManager starts named sessions with matching CLI profile', () => {
   assert.equal(session.command, 'powershell.exe');
   assert.deepEqual(spawned[0].args, ['-NoLogo', '-NoExit', '-Command', 'opencode']);
 });
+
+test('SessionManager starts a named agent session from a provider profile', () => {
+  const spawned = [];
+  const manager = new SessionManager({
+    config: {
+      cwd: 'D:\\shareterminal',
+      shell: 'powershell.exe',
+      profiles: {
+        main: { command: 'powershell.exe', args: ['-NoLogo'], cwd: 'D:\\shareterminal' },
+        opencode: { command: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-Command', 'opencode'], cwd: 'D:\\shareterminal' }
+      }
+    },
+    ptyFactory: (profile) => {
+      spawned.push(profile);
+      return new FakePty();
+    },
+    transcriptStore: {
+      append: async () => {},
+      read: async () => []
+    }
+  });
+
+  const session = manager.getOrCreateWithProfile('opencode1', 'opencode');
+
+  assert.equal(session.name, 'opencode1');
+  assert.equal(session.label, 'opencode1');
+  assert.equal(session.command, 'powershell.exe');
+  assert.deepEqual(spawned[0].args, ['-NoLogo', '-NoExit', '-Command', 'opencode']);
+});

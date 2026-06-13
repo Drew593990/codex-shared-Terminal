@@ -26,6 +26,24 @@
       <section class="workspace">
         <section id="terminal" class="terminal" aria-label="Shared terminal"></section>
         <aside id="conversation-panel" class="conversation" aria-label="Direct conversation">
+          <section class="team-panel" aria-label="Task team">
+            <div class="team-header">
+              <h2>Task Team</h2>
+              <span id="team-status" class="team-status"></span>
+            </div>
+            <div class="conversation-toolbar">
+              <select id="team-profile-select" class="agent-select" aria-label="Team agent profile"></select>
+              <input id="team-agent-id" class="conversation-id" aria-label="Agent ID" autocomplete="off" spellcheck="false" placeholder="opencode1">
+              <button id="add-team-agent" type="button">Add</button>
+            </div>
+            <section id="team-roster" class="team-roster" aria-label="Current task agents"></section>
+            <textarea id="team-prompt" class="agent-prompt team-prompt" aria-label="Team prompt" rows="3">@team </textarea>
+            <div class="conversation-toolbar">
+              <button id="send-team-task" type="button">Dispatch</button>
+              <button id="refresh-team" type="button">Refresh</button>
+            </div>
+            <section id="team-messages" class="team-messages" aria-label="Team messages"></section>
+          </section>
           <div class="conversation-toolbar">
             <select id="agent-select" class="agent-select" aria-label="Agent"></select>
             <input id="conversation-id" class="conversation-id" aria-label="Conversation ID" autocomplete="off" spellcheck="false">

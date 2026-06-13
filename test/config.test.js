@@ -21,6 +21,7 @@ test('loadConfig defines direct agent profiles and conversation storage', () => 
   });
 
   assert.equal(config.conversationDir, 'X:\\workspace\\shareterminal\\data\\conversations');
+  assert.equal(config.teamDir, 'X:\\workspace\\shareterminal\\data\\team');
   assert.equal(config.agentProfiles.echo.mode, 'echo');
   assert.equal(
     config.agentProfiles.opencode.command,

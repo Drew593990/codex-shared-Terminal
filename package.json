@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node --test",
-    "check": "node --check server/index.js && node --check server/config.js && node --check server/session-manager.js && node --check server/transcript-store.js && node --check server/conversation-store.js && node --check server/agent-adapter.js && node --check server/web-server.js && node --check public/app.js"
+    "check": "node --check server/index.js && node --check server/config.js && node --check server/session-manager.js && node --check server/transcript-store.js && node --check server/conversation-store.js && node --check server/team-store.js && node --check server/agent-adapter.js && node --check server/web-server.js && node --check public/app.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

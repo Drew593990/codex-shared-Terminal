@@ -60,6 +60,14 @@ function requireAgentAdapter(agentAdapter) {
   }
 }
 
+function requireTeamStore(teamStore) {
+  if (!teamStore) {
+    const error = new Error('team store is not configured');
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
 function defaultConversationId(agentName) {
   return `${agentName}-${Date.now()}`;
 }
@@ -80,6 +88,12 @@ function formatDirectTurnNotice(turn) {
   return `\r\n[${turn.agent} ${status}] ${turn.turnId || ''}\r\n> ${prompt}\r\n${result}\r\n`;
 }
 
+function formatTeamTaskNotice(task) {
+  const prompt = oneLine(task.prompt, 240);
+  const leader = task.leaderAgentId ? ` leader=${task.leaderAgentId}` : '';
+  return `\r\n[team ${task.status}] ${task.taskId || ''}${leader}\r\n> ${prompt}\r\n`;
+}
+
 async function publishDirectTurnNotice(sessionManager, sessionName, turn) {
   if (typeof sessionManager.publishSystem !== 'function') {
     return;
@@ -87,7 +101,14 @@ async function publishDirectTurnNotice(sessionManager, sessionName, turn) {
   await sessionManager.publishSystem(sessionName || 'main', formatDirectTurnNotice(turn));
 }
 
-function createWebServer({ sessionManager, config, conversationStore, agentAdapter }) {
+async function publishTeamTaskNotice(sessionManager, sessionName, task) {
+  if (typeof sessionManager.publishSystem !== 'function') {
+    return;
+  }
+  await sessionManager.publishSystem(sessionName || 'main', formatTeamTaskNotice(task));
+}
+
+function createWebServer({ sessionManager, config, conversationStore, teamStore, agentAdapter }) {
   const app = express();
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
@@ -112,6 +133,161 @@ function createWebServer({ sessionManager, config, conversationStore, agentAdapt
       ? agentAdapter.listAgents()
       : publicAgentProfiles(config.agentProfiles);
     response.json({ agents });
+  });
+
+  app.get('/api/team/agents', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      response.json({ agents: await teamStore.listAgentProfiles() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/agents', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const profile = await teamStore.addAgentProfile(request.body || {});
+      response.json({ ok: true, profile });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/team/roster', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const roster = await teamStore.listRoster();
+      if (typeof sessionManager.getOrCreateWithProfile === 'function') {
+        roster
+          .filter((agent) => agent.status !== 'removed')
+          .forEach((agent) => sessionManager.getOrCreateWithProfile(agent.session || agent.agentId, agent.profileId));
+      }
+      response.json({ roster });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/roster/agents', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const agent = await teamStore.addRosterAgent(request.body || {});
+      if (typeof sessionManager.getOrCreateWithProfile === 'function') {
+        sessionManager.getOrCreateWithProfile(agent.session || agent.agentId, agent.profileId);
+      }
+      response.json({ ok: true, agent });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/roster/leader', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const agentId = request.body && request.body.agentId;
+      const agent = await teamStore.setLeader(agentId);
+      response.json({ ok: true, agent });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/roster/agents/:agentId/remove', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const agent = await teamStore.removeRosterAgent(request.params.agentId);
+      response.json({ ok: true, agent });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/team/tasks', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      response.json({ tasks: await teamStore.listTasks() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/team/tasks/:taskId', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const task = await teamStore.getTask(request.params.taskId);
+      if (!task) {
+        response.status(404).json({ ok: false, error: 'task not found' });
+        return;
+      }
+      response.json({ task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/tasks', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const prompt = request.body && request.body.prompt;
+      if (typeof prompt !== 'string') {
+        response.status(400).json({ ok: false, error: 'prompt must be a string' });
+        return;
+      }
+      const task = await teamStore.createTask(request.body || {});
+      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || 'main', task);
+      response.json({ ok: true, task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/team/context', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      response.json({ context: await teamStore.getContext() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/context/notes', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const note = await teamStore.addContextNote(request.body || {});
+      response.json({ ok: true, note });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/team/messages', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      response.json({ messages: await teamStore.listMessages({ agent: request.query.agent }) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/messages', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const message = await teamStore.sendMessage(request.body || {});
+      response.json({ ok: true, message });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/messages/:messageId/read', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const message = await teamStore.markMessageRead(request.params.messageId);
+      response.json({ ok: true, message });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/api/conversations', async (request, response, next) => {
