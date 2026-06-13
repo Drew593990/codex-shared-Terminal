@@ -152,6 +152,13 @@ if ($OpenBrowser) {
     sessionTranscript = "$baseUrl/api/sessions/{session}/transcript"
     agentTurns = "$baseUrl/api/agents/{agent}/turns"
     conversationTurns = "$baseUrl/api/conversations/{conversationId}/turns"
+    teamAgentInbox = "$baseUrl/api/team/agents/{agentId}/inbox"
+    teamTasks = "$baseUrl/api/team/tasks"
+    teamTaskClaim = "$baseUrl/api/team/tasks/{taskId}/claim"
+    teamTaskHeartbeat = "$baseUrl/api/team/tasks/{taskId}/heartbeat"
+    teamTaskRecoverStale = "$baseUrl/api/team/tasks/recover-stale"
+    teamMessages = "$baseUrl/api/team/messages"
+    teamTrace = "$baseUrl/api/team/trace/{id}"
   }
   examples = @{
     directEcho = "Invoke-RestMethod -Method Post -Uri '$baseUrl/api/agents/echo/turns' -Headers @{ Authorization = 'Bearer $Token' } -ContentType 'application/json' -Body '{""conversationId"":""agent-smoke"",""prompt"":""Reply exactly: OK"",""terminalSession"":""main""}'"

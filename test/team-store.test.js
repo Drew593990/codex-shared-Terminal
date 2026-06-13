@@ -244,6 +244,146 @@ test('TeamStore cancels queued work and creates traceable retries', async () => 
   }
 });
 
+test('TeamStore exposes an agent inbox with assigned tasks, messages, and context', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    let taskIndex = 0;
+    const store = new TeamStore(root, {
+      now: createClock(),
+      taskIdFactory: () => `task-${++taskIndex}`,
+      messageIdFactory: (() => {
+        let index = 0;
+        return () => `message-${++index}`;
+      })()
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const task = await store.createTask({
+      title: 'Agent owned task',
+      prompt: '@echo2 inspect the task and report back',
+      createdBy: 'codex',
+      assignedTo: 'echo2'
+    });
+    await store.sendMessage({
+      from: 'echo1',
+      to: 'echo2',
+      taskId: task.taskId,
+      body: '@echo2 include the current context'
+    });
+
+    const inbox = await store.agentInbox('echo2');
+
+    assert.equal(inbox.agent.agentId, 'echo2');
+    assert.deepEqual(inbox.tasks.map((item) => item.taskId), [task.taskId]);
+    assert.deepEqual(inbox.messages.map((message) => message.to), ['echo2', 'echo2']);
+    assert.equal(inbox.context.leader.agentId, 'echo1');
+    assert.equal(inbox.context.activeTasks[0].taskId, task.taskId);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('TeamStore lets agents claim work, heartbeat it, and recover stale running tasks', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    const clockValues = [
+      '2026-06-14T02:00:00.000Z',
+      '2026-06-14T02:00:01.000Z',
+      '2026-06-14T02:00:02.000Z',
+      '2026-06-14T02:00:03.000Z',
+      '2026-06-14T02:00:04.000Z',
+      '2026-06-14T02:00:05.000Z',
+      '2026-06-14T02:00:06.000Z',
+      '2026-06-14T02:00:07.000Z',
+      '2026-06-14T02:00:08.000Z',
+      '2026-06-14T02:10:00.000Z',
+      '2026-06-14T02:10:01.000Z',
+      '2026-06-14T02:10:02.000Z',
+      '2026-06-14T02:10:03.000Z',
+      '2026-06-14T02:12:00.000Z',
+      '2026-06-14T02:12:01.000Z',
+      '2026-06-14T02:12:02.000Z',
+      '2026-06-14T02:12:03.000Z'
+    ];
+    const store = new TeamStore(root, {
+      now: () => clockValues.shift() || '2026-06-14T02:10:59.000Z',
+      taskIdFactory: () => 'task-claim-1',
+      messageIdFactory: () => 'message-claim-1'
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await store.createTask({
+      title: 'Claimable task',
+      prompt: '@leader claim this',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    const claimed = await store.claimTask(task.taskId, {
+      agentId: 'echo1',
+      mode: 'external',
+      leaseMs: 60_000
+    });
+    const heartbeat = await store.heartbeatTask(task.taskId, {
+      agentId: 'echo1',
+      leaseMs: 60_000,
+      note: 'still working'
+    });
+    const recovered = await store.recoverStaleTasks({
+      staleBefore: '2026-06-14T02:12:00.000Z',
+      reason: 'agent heartbeat expired'
+    });
+    const latest = await store.getTask(task.taskId);
+    const trace = await store.trace(task.taskId);
+
+    assert.equal(claimed.status, 'running');
+    assert.equal(claimed.claimedBy, 'echo1');
+    assert.equal(heartbeat.leaseExpiresAt, '2026-06-14T02:11:00.000Z');
+    assert.equal(recovered.length, 1);
+    assert.equal(latest.status, 'queued');
+    assert.equal(latest.claimedBy, null);
+    assert.equal(latest.error, 'agent heartbeat expired');
+    assert.deepEqual(trace.events.map((event) => event.type).slice(-3), [
+      'task.claimed',
+      'task.heartbeat',
+      'task.recovered'
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('TeamStore clears agent leases when claimed tasks close', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    let taskIndex = 0;
+    const store = new TeamStore(root, {
+      now: createClock(),
+      taskIdFactory: () => `task-close-${++taskIndex}`,
+      messageIdFactory: () => `message-close-${taskIndex}`
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await store.createTask({
+      title: 'Claim and close',
+      prompt: '@leader close cleanly',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    await store.claimTask(task.taskId, { agentId: 'echo1', leaseMs: 60000 });
+    const completed = await store.completeTask(task.taskId, {
+      agentId: 'echo1',
+      result: 'done'
+    });
+
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.claimedBy, null);
+    assert.equal(completed.leaseExpiresAt, null);
+    assert.equal((await store.listRoster()).find((agent) => agent.agentId === 'echo1').activeTaskId, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TeamStore creates child tasks and includes them in parent trace', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
   try {

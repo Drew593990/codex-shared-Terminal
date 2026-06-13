@@ -265,6 +265,15 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     }
   });
 
+  app.get('/api/team/agents/:agentId/inbox', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      response.json({ inbox: await teamStore.agentInbox(request.params.agentId) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get('/api/team/roster', async (request, response, next) => {
     try {
       requireTeamStore(teamStore);
@@ -332,6 +341,37 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
         return;
       }
       response.json({ task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/tasks/recover-stale', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const tasks = await teamStore.recoverStaleTasks(request.body || {});
+      response.json({ ok: true, tasks });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/tasks/:taskId/claim', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const task = await teamStore.claimTask(request.params.taskId, request.body || {});
+      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || task.claimedBy || 'main', task);
+      response.json({ ok: true, task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/tasks/:taskId/heartbeat', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const task = await teamStore.heartbeatTask(request.params.taskId, request.body || {});
+      response.json({ ok: true, task });
     } catch (error) {
       next(error);
     }

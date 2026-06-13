@@ -78,7 +78,14 @@ To start and open the browser:
     "sessionInput": "http://127.0.0.1:7842/api/sessions/{session}/input",
     "sessionTranscript": "http://127.0.0.1:7842/api/sessions/{session}/transcript",
     "agentTurns": "http://127.0.0.1:7842/api/agents/{agent}/turns",
-    "conversationTurns": "http://127.0.0.1:7842/api/conversations/{conversationId}/turns"
+    "conversationTurns": "http://127.0.0.1:7842/api/conversations/{conversationId}/turns",
+    "teamAgentInbox": "http://127.0.0.1:7842/api/team/agents/{agentId}/inbox",
+    "teamTasks": "http://127.0.0.1:7842/api/team/tasks",
+    "teamTaskClaim": "http://127.0.0.1:7842/api/team/tasks/{taskId}/claim",
+    "teamTaskHeartbeat": "http://127.0.0.1:7842/api/team/tasks/{taskId}/heartbeat",
+    "teamTaskRecoverStale": "http://127.0.0.1:7842/api/team/tasks/recover-stale",
+    "teamMessages": "http://127.0.0.1:7842/api/team/messages",
+    "teamTrace": "http://127.0.0.1:7842/api/team/trace/{id}"
   }
 }
 ```
@@ -133,6 +140,73 @@ reply...
 ```
 
 The browser terminal and the raw transcript both see these records.
+
+## Team Work API
+
+Use this path when an external local agent is participating in the Phase 2 team
+layer rather than only running one direct prompt.
+
+Read the agent's assigned tasks, pending messages, and shared context:
+
+```powershell
+$share = .\scripts\quick-start.ps1 | ConvertFrom-Json
+Invoke-RestMethod -Uri "$($share.baseUrl)/api/team/agents/echo1/inbox"
+```
+
+Claim a queued task before working on it:
+
+```powershell
+$body = @{
+  agentId = 'echo1'
+  mode = 'external'
+  leaseMs = 120000
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/tasks/<taskId>/claim" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+Send heartbeats while the task is running:
+
+```powershell
+$body = @{
+  agentId = 'echo1'
+  leaseMs = 120000
+  note = 'still working'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/tasks/<taskId>/heartbeat" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+If an agent crashes or stops heartbeating, a coordinator can return expired work
+to the queue:
+
+```powershell
+$body = @{
+  staleBefore = (Get-Date).ToUniversalTime().ToString('o')
+  reason = 'agent heartbeat expired'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/tasks/recover-stale" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+Claiming and heartbeat are for external agents that manage their own execution.
+For ShareTerminal-managed direct turns, use `/api/team/tasks/{taskId}/dispatch`
+or `/api/agents/{agent}/turns`.
 
 ## Raw Visible Terminal API
 
@@ -215,3 +289,6 @@ Runtime files stay under the project root:
 5. Use `/api/sessions/{session}/input` only when controlling a visible terminal.
 6. Read `/api/conversations/{conversationId}/turns` or
    `/api/sessions/{session}/transcript` to continue from prior state.
+7. For team participation, poll `/api/team/agents/{agentId}/inbox`, claim a
+   queued task, heartbeat while working, and let stale recovery return expired
+   work to the queue.

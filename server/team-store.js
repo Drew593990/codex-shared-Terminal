@@ -68,6 +68,10 @@ function compactSummary(value, limit = 700) {
     .slice(0, limit);
 }
 
+function addMillisecondsIso(isoValue, milliseconds) {
+  return new Date(new Date(isoValue).getTime() + milliseconds).toISOString();
+}
+
 class TeamStore {
   constructor(rootDir, options = {}) {
     this.rootDir = rootDir;
@@ -252,6 +256,9 @@ class TeamStore {
       handoffTo: null,
       reviewedBy: null,
       reviewStatus: null,
+      claimedBy: null,
+      claimedAt: null,
+      leaseExpiresAt: null,
       result: null,
       error: null,
       attempts: [],
@@ -442,6 +449,170 @@ class TeamStore {
     return updated;
   }
 
+  async agentInbox(agentId) {
+    const safeAgentId = safeId(agentId, 'agentId');
+    const roster = await this.activeRoster();
+    const agent = roster.find((item) => item.agentId === safeAgentId);
+    if (!agent) {
+      throw new Error(`Unknown agent: ${safeAgentId}`);
+    }
+    const messages = await this.listMessages({ agent: safeAgentId });
+    const tasks = (await this.listTasks()).filter((task) => {
+      if (!['queued', 'needs_user'].includes(task.status)) {
+        return false;
+      }
+      if (task.assignedTo === safeAgentId || task.assignedTo === `@${safeAgentId}`) {
+        return true;
+      }
+      if (task.assignedTo === '@leader' && task.leaderAgentId === safeAgentId) {
+        return true;
+      }
+      return (task.mentions || []).includes(`@${safeAgentId}`);
+    });
+    return {
+      agent,
+      tasks,
+      messages,
+      context: await this.getContext()
+    };
+  }
+
+  async assertAgentCanClaim(task, agentId) {
+    const roster = await this.activeRoster();
+    const agent = roster.find((item) => item.agentId === agentId);
+    if (!agent) {
+      throw new Error(`Unknown agent: ${agentId}`);
+    }
+    if (agent.status === 'removed') {
+      throw new Error(`Agent is removed: ${agentId}`);
+    }
+    const assigned = task.assignedTo;
+    const canClaim = assigned === agentId ||
+      assigned === `@${agentId}` ||
+      (assigned === '@leader' && task.leaderAgentId === agentId) ||
+      (task.mentions || []).includes(`@${agentId}`);
+    if (!canClaim) {
+      throw new Error(`Task is not assigned to agent: ${agentId}`);
+    }
+    return agent;
+  }
+
+  async claimTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    if (task.status !== 'queued') {
+      throw new Error(`Task is not claimable: ${task.taskId}`);
+    }
+    const agentId = safeId(input.agentId || task.leaderAgentId, 'agentId');
+    await this.assertAgentCanClaim(task, agentId);
+    const claimedAt = this.now();
+    const leaseMs = Number.isInteger(input.leaseMs) && input.leaseMs > 0 ? input.leaseMs : 120000;
+    const attempt = {
+      agentId,
+      mode: input.mode || 'external',
+      turnId: input.turnId || null,
+      startedAt: claimedAt,
+      completedAt: null,
+      lastHeartbeatAt: claimedAt,
+      leaseExpiresAt: addMillisecondsIso(claimedAt, leaseMs),
+      status: 'running'
+    };
+    const updated = await this.updateTask(task.taskId, {
+      status: 'running',
+      claimedBy: agentId,
+      claimedAt,
+      leaseExpiresAt: attempt.leaseExpiresAt,
+      attempts: [...(task.attempts || []), attempt],
+      error: null
+    });
+    await this.updateRosterAgent(agentId, { status: 'running', activeTaskId: task.taskId });
+    await this.appendEvent({
+      type: 'task.claimed',
+      taskId: task.taskId,
+      agentId,
+      data: { mode: attempt.mode, leaseExpiresAt: attempt.leaseExpiresAt }
+    });
+    return updated;
+  }
+
+  async heartbeatTask(taskId, input = {}) {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+    const agentId = safeId(input.agentId || task.claimedBy || task.leaderAgentId, 'agentId');
+    if (task.status !== 'running' || task.claimedBy !== agentId) {
+      throw new Error(`Task is not claimed by agent: ${agentId}`);
+    }
+    const heartbeatAt = this.now();
+    const leaseMs = Number.isInteger(input.leaseMs) && input.leaseMs > 0 ? input.leaseMs : 120000;
+    const leaseExpiresAt = addMillisecondsIso(heartbeatAt, leaseMs);
+    const attempts = (task.attempts || []).map((attempt, index, values) => {
+      if (index !== values.length - 1 || attempt.agentId !== agentId) {
+        return attempt;
+      }
+      return {
+        ...attempt,
+        lastHeartbeatAt: heartbeatAt,
+        leaseExpiresAt
+      };
+    });
+    const updated = await this.updateTask(task.taskId, { leaseExpiresAt, attempts });
+    await this.updateRosterAgent(agentId, { status: 'running', activeTaskId: task.taskId });
+    await this.appendEvent({
+      type: 'task.heartbeat',
+      taskId: task.taskId,
+      agentId,
+      data: { leaseExpiresAt, note: input.note || null }
+    });
+    return updated;
+  }
+
+  async recoverStaleTasks(input = {}) {
+    const staleBefore = input.staleBefore || this.now();
+    const reason = String(input.reason || 'task lease expired');
+    const tasks = await this.listTasks();
+    const staleTasks = tasks.filter((task) => (
+      task.status === 'running' &&
+      task.claimedBy &&
+      task.leaseExpiresAt &&
+      String(task.leaseExpiresAt).localeCompare(String(staleBefore)) < 0
+    ));
+    const recovered = [];
+    for (const task of staleTasks) {
+      const agentId = task.claimedBy;
+      const attempts = (task.attempts || []).map((attempt, index, values) => {
+        if (index !== values.length - 1 || attempt.agentId !== agentId) {
+          return attempt;
+        }
+        return {
+          ...attempt,
+          status: 'stale',
+          completedAt: this.now()
+        };
+      });
+      const updated = await this.updateTask(task.taskId, {
+        status: 'queued',
+        claimedBy: null,
+        claimedAt: null,
+        leaseExpiresAt: null,
+        error: reason,
+        attempts
+      });
+      await this.updateRosterAgent(agentId, { status: 'idle', activeTaskId: null });
+      await this.appendEvent({
+        type: 'task.recovered',
+        taskId: task.taskId,
+        agentId,
+        data: { reason, staleBefore, previousLeaseExpiresAt: task.leaseExpiresAt }
+      });
+      recovered.push(updated);
+    }
+    return recovered;
+  }
+
   async completeTask(taskId, input = {}) {
     const task = await this.getTask(taskId);
     if (!task) {
@@ -465,6 +636,9 @@ class TeamStore {
       result: String(input.result || ''),
       reviewedBy: input.reviewedBy || task.leaderAgentId || agentId,
       reviewStatus: input.reviewStatus || 'checked',
+      claimedBy: null,
+      claimedAt: null,
+      leaseExpiresAt: null,
       attempts
     });
     await this.updateRosterAgent(agentId, { status: 'idle', activeTaskId: null });
@@ -486,7 +660,10 @@ class TeamStore {
     const agentId = input.agentId || task.leaderAgentId;
     const updated = await this.updateTask(task.taskId, {
       status: 'failed',
-      error: String(input.error || 'task failed')
+      error: String(input.error || 'task failed'),
+      claimedBy: null,
+      claimedAt: null,
+      leaseExpiresAt: null
     });
     if (agentId) {
       await this.updateRosterAgent(agentId, { status: 'idle', activeTaskId: null });
@@ -516,7 +693,10 @@ class TeamStore {
     const agentId = input.agentId || task.leaderAgentId;
     const updated = await this.updateTask(task.taskId, {
       status: 'cancelled',
-      error: String(input.reason || input.error || 'task cancelled')
+      error: String(input.reason || input.error || 'task cancelled'),
+      claimedBy: null,
+      claimedAt: null,
+      leaseExpiresAt: null
     });
     if (agentId) {
       await this.updateRosterAgent(agentId, { status: 'idle', activeTaskId: null });

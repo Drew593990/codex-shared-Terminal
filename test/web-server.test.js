@@ -721,6 +721,135 @@ test('team task API cancels queued work and creates retry tasks', async () => {
   }
 });
 
+test('team agent inbox API returns messages, assigned tasks, and context', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-agent-inbox-${++taskIndex}`,
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-agent-inbox-${++index}`;
+    })()
+  });
+  const manager = createFakeManager();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const task = await teamStore.createTask({
+      title: 'External agent inbox',
+      prompt: '@echo2 inspect via inbox',
+      createdBy: 'codex',
+      assignedTo: 'echo2'
+    });
+
+    const inboxResponse = await fetch(`${base}/api/team/agents/echo2/inbox`);
+    const inboxBody = await inboxResponse.json();
+    assert.equal(inboxResponse.status, 200);
+    assert.equal(inboxBody.inbox.agent.agentId, 'echo2');
+    assert.deepEqual(inboxBody.inbox.tasks.map((item) => item.taskId), [task.taskId]);
+    assert.equal(inboxBody.inbox.messages[0].to, 'echo2');
+    assert.equal(inboxBody.inbox.context.leader.agentId, 'echo1');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('team claim API supports agent heartbeat and stale recovery', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  const clockValues = [
+    '2026-06-14T03:00:00.000Z',
+    '2026-06-14T03:00:01.000Z',
+    '2026-06-14T03:00:02.000Z',
+    '2026-06-14T03:00:03.000Z',
+    '2026-06-14T03:00:04.000Z',
+    '2026-06-14T03:00:05.000Z',
+    '2026-06-14T03:00:06.000Z',
+    '2026-06-14T03:00:07.000Z',
+    '2026-06-14T03:00:08.000Z',
+    '2026-06-14T03:10:00.000Z',
+    '2026-06-14T03:10:01.000Z',
+    '2026-06-14T03:10:02.000Z',
+    '2026-06-14T03:10:03.000Z',
+    '2026-06-14T03:12:00.000Z',
+    '2026-06-14T03:12:01.000Z',
+    '2026-06-14T03:12:02.000Z',
+    '2026-06-14T03:12:03.000Z'
+  ];
+  const teamStore = new TeamStore(root, {
+    now: () => clockValues.shift() || '2026-06-14T03:10:59.000Z',
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => 'task-claim-api-1',
+    messageIdFactory: () => 'message-claim-api-1'
+  });
+  const manager = createFakeManager();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await teamStore.createTask({
+      title: 'Claim API task',
+      prompt: '@leader claim through API',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    const claimResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/claim`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'echo1', mode: 'external', leaseMs: 60000 })
+    });
+    const claimBody = await claimResponse.json();
+    assert.equal(claimResponse.status, 200);
+    assert.equal(claimBody.task.status, 'running');
+    assert.equal(claimBody.task.claimedBy, 'echo1');
+
+    const heartbeatResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/heartbeat`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'echo1', leaseMs: 60000, note: 'still active' })
+    });
+    const heartbeatBody = await heartbeatResponse.json();
+    assert.equal(heartbeatResponse.status, 200);
+    assert.equal(heartbeatBody.task.leaseExpiresAt, '2026-06-14T03:11:00.000Z');
+
+    const recoverResponse = await fetch(`${base}/api/team/tasks/recover-stale`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ staleBefore: '2026-06-14T03:12:00.000Z', reason: 'lease expired' })
+    });
+    const recoverBody = await recoverResponse.json();
+    assert.equal(recoverResponse.status, 200);
+    assert.equal(recoverBody.tasks.length, 1);
+    assert.equal(recoverBody.tasks[0].status, 'queued');
+    assert.equal(recoverBody.tasks[0].error, 'lease expired');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team dispatch marks failed agent runs as retryable inbox items', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   const teamStore = new TeamStore(root, {
