@@ -81,14 +81,28 @@ future local agents to:
 
 - appear together in one browser workspace instead of replacing each other in a
   single terminal view;
+- add or remove repeatable agent instances during a task, such as three
+  `opencode` agents and two `claude` agents in the same workspace;
+- add other local CLI profiles later and instantiate them into the same task
+  workspace;
 - register available agents and their capabilities;
 - create tasks with durable ids and status;
 - assign tasks to visible terminal sessions or direct agents;
+- address specific agents with mentions such as `@opencode1`, `@opencode2`,
+  `@claude-code1`, or `@codex1`;
+- let mentioned agents join a team conversation, negotiate work, split
+  assignments, and return a final combined delivery;
 - read shared context about the current command, environment, repository state,
   task board, and progress;
 - exchange messages with each other through a backend communication channel;
 - split a larger request into separate agent-owned tasks that can run in
   parallel;
+- show a task subview with the current roster, each agent's state, active work,
+  and latest handoff;
+- treat the first agent in the task roster as the default leader unless the user
+  chooses another leader;
+- let the leader agent plan, delegate, inspect returned work, request fixes, and
+  prepare the final delivery after checks pass;
 - keep task progress and result history across restarts;
 - show agent/team state in the browser UI;
 - let the user intervene before, during, or after agent work;
@@ -120,24 +134,30 @@ flowchart LR
   API --> Server
 
   Server --> Registry["Agent Registry"]
+  Server --> Roster["Task Agent Roster"]
   Server --> Board["Task Board"]
+  Server --> Mentions["Mention Router"]
   Server --> Dispatcher["Dispatcher"]
   Server --> Context["Shared Context"]
   Server --> Messages["Agent Messages"]
   Server --> Inbox["Inbox / Ack"]
   Server --> Trace["Trace View"]
 
+  Roster --> Dispatcher
+  Mentions --> Messages
   Dispatcher --> Sessions["Visible PTY session grid"]
   Dispatcher --> Direct["Direct agent turns"]
 
   Sessions --> PowerShell["main PowerShell pane"]
-  Sessions --> OpenCodeTui["opencode pane"]
-  Sessions --> ClaudeTui["Claude Code pane"]
+  Sessions --> OpenCode1["opencode1 pane"]
+  Sessions --> OpenCode2["opencode2 pane"]
+  Sessions --> Claude1["claude-code1 pane"]
   Sessions --> AgentN["future agent pane"]
 
   Direct --> OpenCodeRun["opencode direct adapter"]
   Direct --> ClaudeRun["claude direct adapter"]
 
+  Roster --> Disk["Project-local JSONL / JSON state"]
   Board --> Disk["Project-local JSONL / JSON state"]
   Context --> Disk
   Messages --> Disk
@@ -149,24 +169,124 @@ flowchart LR
 
 ### Agent Registry
 
-Purpose: define which agents exist and how they can be used.
+Purpose: define which agent profiles exist and how new instances can be
+created.
 
 Initial fields:
 
-- `name`: stable id such as `codex`, `opencode`, `claude`, `openclaw`;
+- `profileId`: stable provider/profile id such as `codex`, `opencode`,
+  `claude`, `openclaw`;
 - `label`: UI display name;
+- `command`: default CLI command or direct adapter id;
 - `kind`: `terminal`, `direct`, or `external`;
-- `session`: visible terminal session name when applicable;
 - `directAgent`: direct API agent name when applicable;
 - `capabilities`: examples include `code`, `review`, `research`, `shell`,
   `long-conversation`;
 - `worktreeMode`: `shared`, `isolated`, or `none`;
+- `defaultCount`: optional number of instances to create when a task starts;
 - `enabled`: whether the agent is active.
 
 Storage:
 
 - default built-in registry in code;
 - optional project override in `<repo>\.shareterminal\agents.json` later.
+
+Rules:
+
+- built-in profiles cover known CLIs such as `opencode`, `claude`, and `codex`;
+- custom profiles can be added for other local CLIs by defining command,
+  working directory behavior, environment policy, and adapter type;
+- adding a profile does not automatically add it to a task; the roster controls
+  which instances are actually participating;
+- disabling a profile should not delete historical roster entries or traces.
+
+### Task Agent Roster
+
+Purpose: define which agent instances are participating in the current task or
+team workspace.
+
+The roster is separate from the registry. The registry says which profiles are
+available. The roster says which concrete instances are in this task.
+
+Example roster:
+
+```json
+[
+  { "agentId": "opencode1", "profileId": "opencode", "role": "leader" },
+  { "agentId": "opencode2", "profileId": "opencode", "role": "worker" },
+  { "agentId": "opencode3", "profileId": "opencode", "role": "worker" },
+  { "agentId": "claude-code1", "profileId": "claude", "role": "reviewer" },
+  { "agentId": "claude-code2", "profileId": "claude", "role": "worker" }
+]
+```
+
+Initial roster fields:
+
+- `agentId`: unique mentionable id within the task, such as `opencode1`;
+- `profileId`: registry profile used to create the instance;
+- `role`: `leader`, `worker`, `reviewer`, `observer`, or future custom role;
+- `session`: visible terminal session name when applicable;
+- `conversationId`: direct conversation id when applicable;
+- `status`: `idle`, `planning`, `running`, `waiting`, `reviewing`, `blocked`,
+  `completed`, `failed`, or `removed`;
+- `activeTaskId`: current child task id if any;
+- `lastActivityAt`;
+- `addedBy`;
+- `removedAt`.
+
+Rules:
+
+- users and Codex can add more instances of the same profile at any time;
+- users and Codex can remove idle or completed instances at any time;
+- removing a running instance should require cancel, detach, or handoff first;
+- instance ids are stable within a task, so `@opencode1` always targets the
+  same agent unless it has been removed;
+- the first agent in the roster is the default leader unless the user selects a
+  different leader;
+- the leader can be reassigned, but the reassignment must be recorded in trace.
+
+### Mention Router
+
+Purpose: convert human-readable `@agent` calls into team messages and task
+assignments.
+
+Mention examples:
+
+- `@opencode1 inspect the server routes`;
+- `@opencode2 write tests for the task store`;
+- `@claude-code1 review opencode1's result`;
+- `@codex1 summarize the final delivery`.
+
+Routing rules:
+
+- `@agentId` targets one roster instance;
+- `@profileId` may target the first matching idle instance or open a selection
+  prompt if multiple matches exist;
+- `@team` targets the whole roster;
+- `@leader` targets the current leader;
+- mentions should be stored as structured messages, not only injected into the
+  terminal as text;
+- mention parsing must preserve the original user text in the trace.
+
+### Leader Agent
+
+Purpose: coordinate the team without hiding the work from the user.
+
+Default behavior:
+
+- the first roster agent is the leader by default;
+- the task subview should visually mark the leader;
+- the leader receives the original user request and current shared context;
+- the leader creates the initial plan and child-task split;
+- the leader assigns tasks through the dispatcher or asks the user before
+  dispatch when approval is required;
+- the leader reads returned results, checks them against the request, requests
+  fixes if needed, and only then prepares the final delivery;
+- the final delivery should include which agents contributed and what evidence
+  was checked.
+
+The leader is a coordination role, not an invisible privileged process. Its
+terminal/direct conversation should remain inspectable like every other agent.
 
 ### Task Board
 
@@ -188,7 +308,9 @@ Initial fields:
 - `title`;
 - `prompt`;
 - `createdBy`;
-- `assignedTo`;
+- `assignedTo`: one agent id, multiple agent ids, `@team`, or `@leader`;
+- `leaderAgentId`;
+- `rosterId`;
 - `status`;
 - `conversationId`;
 - `terminalSession`;
@@ -197,6 +319,11 @@ Initial fields:
 - `result`;
 - `error`;
 - `parentTaskId`;
+- `childTaskIds`;
+- `handoffFrom`;
+- `handoffTo`;
+- `reviewedBy`;
+- `reviewStatus`;
 - `attempts`.
 
 Storage:
@@ -215,6 +342,7 @@ Initial context fields:
 - current terminal sessions and their last known commands;
 - environment summary relevant to local CLIs;
 - git branch/status summary;
+- current team roster and leader;
 - active tasks and assigned agents;
 - recent completed results;
 - user-visible notes or constraints.
@@ -236,6 +364,7 @@ Initial message fields:
 - `messageId`;
 - `from`;
 - `to`;
+- `mentions`;
 - `taskId`;
 - `body`;
 - `status`;
@@ -246,6 +375,7 @@ Initial message fields:
 Initial operations:
 
 - send message to an agent;
+- send message to `@team` or `@leader`;
 - list pending messages for an agent;
 - mark message read;
 - link message to task trace.
@@ -269,6 +399,10 @@ Rules:
 - queue additional work per agent;
 - allow multiple agents to run in parallel when they own separate sessions or
   workspaces;
+- when a task targets `@team`, route the first planning turn to the leader;
+- after the leader produces a plan, create child tasks for selected agents;
+- route returned worker results back to the leader for review before final
+  delivery;
 - publish lifecycle notices into the visible terminal session;
 - write every state transition to the task event log;
 - never silently consume a result without recording it.
@@ -337,6 +471,7 @@ Read-only:
 
 ```text
 GET /api/team/agents
+GET /api/team/roster
 GET /api/team/tasks
 GET /api/team/tasks/:taskId
 GET /api/team/context
@@ -349,6 +484,10 @@ Write:
 
 ```text
 POST /api/team/tasks
+POST /api/team/agents
+POST /api/team/roster/agents
+POST /api/team/roster/leader
+POST /api/team/roster/agents/:agentId/remove
 POST /api/team/tasks/:taskId/cancel
 POST /api/team/tasks/:taskId/retry
 POST /api/team/context/notes
@@ -361,11 +500,27 @@ Example task submission:
 
 ```json
 {
-  "title": "Review parser changes",
-  "prompt": "Review the latest parser changes and list blocking issues.",
-  "assignedTo": "opencode",
-  "mode": "direct",
-  "terminalSession": "main"
+  "title": "Review and test parser changes",
+  "prompt": "@team review the parser changes, split implementation and test work, then produce one checked delivery.",
+  "assignedTo": "@team",
+  "leaderAgentId": "opencode1",
+  "mode": "team",
+  "roster": [
+    { "profileId": "opencode", "agentId": "opencode1", "role": "leader" },
+    { "profileId": "opencode", "agentId": "opencode2", "role": "worker" },
+    { "profileId": "claude", "agentId": "claude-code1", "role": "reviewer" }
+  ]
+}
+```
+
+Example adding an agent instance during a running task:
+
+```json
+{
+  "profileId": "opencode",
+  "agentId": "opencode3",
+  "role": "worker",
+  "reason": "Need a separate agent to inspect browser UI changes."
 }
 ```
 
@@ -376,7 +531,10 @@ separate large platform.
 
 Suggested panel sections:
 
-- Agents: name, kind, busy/idle/error, active task;
+- Task Team: current roster, leader marker, add/remove controls, per-agent
+  status, active child task, latest message, and last result;
+- Agents: available profiles, kind, capabilities, default command, enabled
+  state;
 - Workspace Grid: multiple visible agent terminal panes in one browser
   workspace;
 - Task Board: queued/running/completed/failed tasks;
@@ -388,15 +546,25 @@ Important UI rule:
 
 - Codex-driven work must be visible without stealing terminal focus from the
   user.
+- The task subview must show which agents are participating in this task and
+  which one is the leader before any team dispatch starts.
+- Adding another `opencode` or `claude` instance should create a new roster
+  entry and a visible pane/session, not replace the existing one.
+- Removing an agent should leave its prior messages, task trace, and terminal
+  transcript available for audit.
+- The final delivery should be visually tied to the leader's checked summary,
+  with worker outputs available underneath it.
 
 ## Implementation Slices
 
 ### Slice 1: Durable Task Board
 
 - Add task store and tests.
+- Add roster store with repeatable agent instances.
 - Add task CRUD/read APIs.
+- Add roster read/add/remove/set-leader APIs.
 - Add deterministic `echo` execution path.
-- Show task status in a basic browser panel.
+- Show task status and current roster in a basic browser panel.
 
 ### Slice 2: Multi-Session Workspace View
 
@@ -404,36 +572,48 @@ Important UI rule:
 - Keep each agent pane attached to its own named PTY session.
 - Preserve user focus and input routing per pane.
 - Show shared session status without hiding terminal output.
+- Add one-click add/remove controls for repeatable provider instances.
+- Mark the leader agent in the task subview.
 
-### Slice 3: Dispatcher to Existing Direct API
+### Slice 3: Mention Router and Leader Planning
+
+- Parse `@agentId`, `@profileId`, `@team`, and `@leader` mentions.
+- Persist mentions as structured messages.
+- Route the first `@team` turn to the leader.
+- Let the leader create child tasks for selected agents.
+
+### Slice 4: Dispatcher to Existing Direct API
 
 - Route tasks to existing `/api/agents/:agent/turns`.
 - Publish task running/completed notices to visible terminal session.
 - Store task attempts and result.
 - Add retry/cancel where safe.
+- Return worker results to the leader for review before final delivery.
 
-### Slice 4: Shared Context and Agent Messages
+### Slice 5: Shared Context and Agent Messages
 
 - Add shared context projection.
 - Add agent message store and APIs.
 - Let an agent read pending messages and linked task context.
 - Surface important inter-agent messages in the UI.
 
-### Slice 5: Inbox and Trace
+### Slice 6: Inbox and Trace
 
 - Create inbox item on terminal task completion.
 - Add ack and detail APIs.
 - Add trace endpoint for task and turn ids.
 - Add UI views for inbox and trace.
+- Trace leader planning, delegation, worker handoffs, review, and final
+  delivery.
 
-### Slice 6: Agent Registry and Config
+### Slice 7: Agent Registry and Config
 
 - Add built-in registry.
 - Add optional project-local `.shareterminal\agents.json`.
 - Validate unknown agents and disabled agents.
 - Surface capabilities in UI/API.
 
-### Slice 7: Optional Worktree Mode
+### Slice 8: Optional Worktree Mode
 
 - Add per-agent isolated worktree support.
 - Add status and cleanup.
@@ -457,14 +637,21 @@ Each slice should include:
   native CLI session ids, or both?
 - Should user approval be a task state (`needs_user`) or an inbox item type?
 - How should external agents such as openclaw discover the team API contract?
+- Should `@profileId` auto-select an idle instance, create a new instance, or
+  ask the user when no exact `@agentId` is provided?
+- What is the minimum leader review evidence required before final delivery?
+- Should removed agent panes stay visible in a collapsed audit state or move
+  only to trace/history?
 
 ## Near-Term Recommendation
 
-Start with Slice 1 and Slice 2 only.
+Start with Slice 1 and Slice 2 only, but design their data model around team
+rosters from the beginning.
 
-This creates two missing foundations before deeper automation: durable task
-state and a browser workspace that can show multiple live agents at once. After
-those are stable, add dispatcher routing, shared context, agent messages, inbox,
-and trace. Avoid copying CCB internals. Use CCB as an architectural reference
-for boundaries: project anchor, dispatcher, message lineage, provider adapters,
-inbox, and trace.
+This creates the missing foundations before deeper automation: durable task
+state, repeatable agent instances, add/remove lifecycle, leader marking, and a
+browser workspace that can show multiple live agents at once. After those are
+stable, add mention routing, leader planning, dispatcher routing, shared
+context, agent messages, inbox, and trace. Avoid copying CCB internals. Use CCB
+as an architectural reference for boundaries: project anchor, dispatcher,
+message lineage, provider adapters, inbox, and trace.
