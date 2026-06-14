@@ -4,6 +4,8 @@ const test = require('node:test');
 
 const { SessionManager } = require('../server/session-manager');
 
+const fixtureCwd = process.cwd();
+
 class FakePty extends EventEmitter {
   constructor() {
     super();
@@ -110,11 +112,11 @@ test('SessionManager starts named sessions with matching CLI profile', () => {
   const spawned = [];
   const manager = new SessionManager({
     config: {
-      cwd: 'D:\\shareterminal',
+      cwd: fixtureCwd,
       shell: 'powershell.exe',
       profiles: {
-        main: { command: 'powershell.exe', args: ['-NoLogo'], cwd: 'D:\\shareterminal' },
-        opencode: { command: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-Command', 'opencode'], cwd: 'D:\\shareterminal' }
+        main: { command: 'powershell.exe', args: ['-NoLogo'], cwd: fixtureCwd },
+        opencode: { command: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-Command', 'opencode'], cwd: fixtureCwd }
       }
     },
     ptyFactory: (profile) => {
@@ -138,11 +140,11 @@ test('SessionManager starts a named agent session from a provider profile', () =
   const spawned = [];
   const manager = new SessionManager({
     config: {
-      cwd: 'D:\\shareterminal',
+      cwd: fixtureCwd,
       shell: 'powershell.exe',
       profiles: {
-        main: { command: 'powershell.exe', args: ['-NoLogo'], cwd: 'D:\\shareterminal' },
-        opencode: { command: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-Command', 'opencode'], cwd: 'D:\\shareterminal' }
+        main: { command: 'powershell.exe', args: ['-NoLogo'], cwd: fixtureCwd },
+        opencode: { command: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-Command', 'opencode'], cwd: fixtureCwd }
       }
     },
     ptyFactory: (profile) => {
