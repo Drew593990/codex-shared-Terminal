@@ -83,6 +83,14 @@ function oneLine(value, limit) {
     .slice(0, limit);
 }
 
+function parseGitStatusChangedFiles(output) {
+  return String(output || '')
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean);
+}
+
 function formatDirectTurnNotice(turn) {
   const status = turn.status || 'completed';
   const prompt = oneLine(turn.prompt, 180);
@@ -144,12 +152,7 @@ async function defaultGitProvider(config = {}) {
       execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd, windowsHide: true }),
       execFileAsync('git', ['status', '--porcelain'], { cwd, windowsHide: true })
     ]);
-    const changedFiles = status.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => line.slice(3).trim())
-      .filter(Boolean);
+    const changedFiles = parseGitStatusChangedFiles(status.stdout);
     return {
       available: true,
       branch: branch.stdout.trim(),
@@ -165,7 +168,7 @@ async function defaultGitProvider(config = {}) {
   }
 }
 
-async function defaultWorktreeProvider(input) {
+async function defaultWorktreeEnsure(input) {
   const cwd = input.cwd || process.cwd();
   await execFileAsync('git', ['worktree', 'add', '-B', input.branch, input.path, 'HEAD'], {
     cwd,
@@ -183,8 +186,40 @@ async function defaultWorktreeProvider(input) {
   };
 }
 
+async function defaultWorktreeStatus(input) {
+  const [branch, head, status] = await Promise.all([
+    execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: input.path, windowsHide: true }),
+    execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd: input.path, windowsHide: true }),
+    execFileAsync('git', ['status', '--porcelain'], { cwd: input.path, windowsHide: true })
+  ]);
+  const changedFiles = parseGitStatusChangedFiles(status.stdout);
+  return {
+    path: input.path,
+    branch: branch.stdout.trim() || input.branch,
+    status: 'ready',
+    head: head.stdout.trim(),
+    dirty: changedFiles.length > 0,
+    changedFiles
+  };
+}
+
+async function defaultWorktreeRemove(input) {
+  const cwd = input.cwd || process.cwd();
+  await execFileAsync('git', ['worktree', 'remove', '--force', input.path], {
+    cwd,
+    windowsHide: true
+  });
+  return {
+    path: input.path,
+    branch: input.branch,
+    status: 'removed'
+  };
+}
+
 const defaultWorktreeProviderAdapter = {
-  ensure: defaultWorktreeProvider
+  ensure: defaultWorktreeEnsure,
+  status: defaultWorktreeStatus,
+  remove: defaultWorktreeRemove
 };
 
 async function mergeContext(baseContext = {}, config = {}, sessionManager, gitProvider = defaultGitProvider) {
@@ -218,6 +253,37 @@ async function resolveDispatchAgent(teamStore, task) {
     throw new Error(`Unknown dispatch agent: ${agentId}`);
   }
   return agent;
+}
+
+async function activeIsolatedWorkspaceAgent(teamStore, agentId) {
+  const roster = await teamStore.listRoster();
+  const agent = roster.find((item) => item.agentId === agentId && item.status !== 'removed');
+  if (!agent) {
+    return { error: { statusCode: 404, message: 'agent not found' } };
+  }
+  if (agent.workspace?.mode !== 'isolated') {
+    return { error: { statusCode: 400, message: 'agent workspace is not isolated' } };
+  }
+  return { agent };
+}
+
+function worktreeInput(config, agent) {
+  const cwd = path.resolve(config.cwd || process.cwd());
+  const workspacePath = path.resolve(agent.workspace.path || '');
+  const worktreesDir = path.resolve(cwd, '.worktrees');
+  const workspaceLower = workspacePath.toLowerCase();
+  const worktreesLower = worktreesDir.toLowerCase();
+  if (!workspaceLower.startsWith(`${worktreesLower}${path.sep}`)) {
+    const error = new Error('agent workspace path is outside project worktrees');
+    error.statusCode = 400;
+    throw error;
+  }
+  return {
+    cwd,
+    agent,
+    path: workspacePath,
+    branch: agent.workspace.branch
+  };
 }
 
 function mentionedRosterAgents(task, roster) {
@@ -449,25 +515,53 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
   app.post('/api/team/roster/agents/:agentId/workspace/ensure', requireToken(config.token), async (request, response, next) => {
     try {
       requireTeamStore(teamStore);
-      const roster = await teamStore.listRoster();
-      const agent = roster.find((item) => item.agentId === request.params.agentId && item.status !== 'removed');
-      if (!agent) {
-        response.status(404).json({ ok: false, error: 'agent not found' });
+      const { agent, error } = await activeIsolatedWorkspaceAgent(teamStore, request.params.agentId);
+      if (error) {
+        response.status(error.statusCode).json({ ok: false, error: error.message });
         return;
       }
-      if (agent.workspace?.mode !== 'isolated') {
-        response.status(400).json({ ok: false, error: 'agent workspace is not isolated' });
-        return;
-      }
-      const result = await worktreeProvider.ensure({
-        cwd: config.cwd || process.cwd(),
-        agent,
-        path: agent.workspace.path,
-        branch: agent.workspace.branch
-      });
+      const result = await worktreeProvider.ensure(worktreeInput(config, agent));
       const updated = await teamStore.updateAgentWorkspace(agent.agentId, {
         ...result,
         status: result.status || 'ready'
+      });
+      response.json({ ok: true, agent: updated });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/team/roster/agents/:agentId/workspace/status', async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const { agent, error } = await activeIsolatedWorkspaceAgent(teamStore, request.params.agentId);
+      if (error) {
+        response.status(error.statusCode).json({ ok: false, error: error.message });
+        return;
+      }
+      const result = await worktreeProvider.status(worktreeInput(config, agent));
+      const updated = await teamStore.updateAgentWorkspace(agent.agentId, {
+        ...result,
+        status: result.status || 'ready'
+      });
+      response.json({ ok: true, agent: updated });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/roster/agents/:agentId/workspace/remove', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const { agent, error } = await activeIsolatedWorkspaceAgent(teamStore, request.params.agentId);
+      if (error) {
+        response.status(error.statusCode).json({ ok: false, error: error.message });
+        return;
+      }
+      const result = await worktreeProvider.remove(worktreeInput(config, agent));
+      const updated = await teamStore.updateAgentWorkspace(agent.agentId, {
+        ...result,
+        status: result.status || 'removed'
       });
       response.json({ ok: true, agent: updated });
     } catch (error) {
@@ -922,6 +1016,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
 module.exports = {
   createWebServer,
   parseLimit,
+  parseGitStatusChangedFiles,
   publicProfiles,
   publicAgentProfiles,
   formatDirectTurnNotice

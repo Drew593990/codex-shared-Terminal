@@ -90,7 +90,9 @@ To start and open the browser:
     "teamTaskRecoverStale": "http://127.0.0.1:7842/api/team/tasks/recover-stale",
     "teamMessages": "http://127.0.0.1:7842/api/team/messages",
     "teamTrace": "http://127.0.0.1:7842/api/team/trace/{id}",
-    "teamAgentWorkspaceEnsure": "http://127.0.0.1:7842/api/team/roster/agents/{agentId}/workspace/ensure"
+    "teamAgentWorkspaceEnsure": "http://127.0.0.1:7842/api/team/roster/agents/{agentId}/workspace/ensure",
+    "teamAgentWorkspaceStatus": "http://127.0.0.1:7842/api/team/roster/agents/{agentId}/workspace/status",
+    "teamAgentWorkspaceRemove": "http://127.0.0.1:7842/api/team/roster/agents/{agentId}/workspace/remove"
   }
 }
 ```
@@ -195,6 +197,27 @@ This write call only accepts agents whose `workspace.mode` is `isolated`. It
 runs `git worktree add -B <branch> <path> HEAD` from the configured project cwd,
 then updates the roster agent workspace to `ready`. Shared and disabled
 workspaces are rejected.
+
+Read the current branch, head, and dirty file list for an isolated workspace:
+
+```powershell
+Invoke-RestMethod -Uri "$($share.baseUrl)/api/team/roster/agents/<agentId>/workspace/status"
+```
+
+Remove an isolated workspace after its work has been recovered or merged:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/roster/agents/<agentId>/workspace/remove" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body '{}'
+```
+
+The remove call runs `git worktree remove --force <path>` from the configured
+project cwd and marks the roster workspace as `removed`. It is intended for
+project-local `.worktrees\<agentId>` checkouts created by the ensure call.
 
 The shared `context` also includes a runtime envelope:
 

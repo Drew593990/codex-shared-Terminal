@@ -5,7 +5,7 @@ const path = require('node:path');
 const test = require('node:test');
 const WebSocket = require('ws');
 
-const { createWebServer } = require('../server/web-server');
+const { createWebServer, parseGitStatusChangedFiles } = require('../server/web-server');
 const { TeamStore } = require('../server/team-store');
 
 function createFakeManager() {
@@ -110,6 +110,13 @@ function createFakeAgentAdapter() {
     }
   };
 }
+
+test('parseGitStatusChangedFiles preserves filenames after porcelain status columns', () => {
+  assert.deepEqual(parseGitStatusChangedFiles(' M README.md\r\n?? docs/phase2.md\r\n'), [
+    'README.md',
+    'docs/phase2.md'
+  ]);
+});
 
 function createFakeTeamStore() {
   const roster = [];
@@ -608,6 +615,84 @@ test('team workspace API ensures isolated agent worktrees and updates roster sta
     }]);
     assert.equal(roster[0].workspace.status, 'ready');
     assert.equal(roster[0].workspace.head, 'abc1234');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('team workspace API reads isolated worktree status and removes it', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  const projectRoot = 'X:\\workspace\\project';
+  const calls = [];
+  const teamStore = new TeamStore(root, {
+    context: {
+      workspace: {
+        projectRoot,
+        cwd: projectRoot
+      }
+    },
+    profiles: {
+      researcher: { label: 'Researcher', mode: 'command', worktreeMode: 'isolated' }
+    }
+  });
+  const manager = createFakeManager();
+  const worktreeProvider = {
+    status: async (input) => {
+      calls.push({ type: 'status', ...input });
+      return {
+        path: input.path,
+        branch: input.branch,
+        status: 'ready',
+        head: 'abc1234',
+        dirty: true,
+        changedFiles: ['README.md']
+      };
+    },
+    remove: async (input) => {
+      calls.push({ type: 'remove', ...input });
+      return {
+        path: input.path,
+        branch: input.branch,
+        status: 'removed'
+      };
+    }
+  };
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    worktreeProvider,
+    config: { token: 'secret', publicDir: process.cwd(), cwd: projectRoot }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'researcher', agentId: 'researcher1' });
+
+    const statusResponse = await fetch(`${base}/api/team/roster/agents/researcher1/workspace/status`);
+    const statusBody = await statusResponse.json();
+    assert.equal(statusResponse.status, 200);
+    assert.equal(statusBody.agent.workspace.status, 'ready');
+    assert.equal(statusBody.agent.workspace.dirty, true);
+    assert.deepEqual(statusBody.agent.workspace.changedFiles, ['README.md']);
+
+    const removeResponse = await fetch(`${base}/api/team/roster/agents/researcher1/workspace/remove`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const removeBody = await removeResponse.json();
+    const roster = await teamStore.listRoster();
+
+    assert.equal(removeResponse.status, 200);
+    assert.equal(removeBody.agent.workspace.status, 'removed');
+    assert.equal(roster[0].workspace.status, 'removed');
+    assert.deepEqual(calls.map((call) => [call.type, call.cwd, call.path, call.branch]), [
+      ['status', projectRoot, path.join(projectRoot, '.worktrees', 'researcher1'), 'shareterminal/researcher1'],
+      ['remove', projectRoot, path.join(projectRoot, '.worktrees', 'researcher1'), 'shareterminal/researcher1']
+    ]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });

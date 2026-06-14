@@ -508,8 +508,11 @@ Current implementation:
   git worktree for planned isolated agents and marks the workspace `ready`;
 - the ensure operation uses `git worktree add -B <branch> <path> HEAD` from the
   configured project cwd;
-- workspace cleanup and richer dirty/status reporting are intentionally left for
-  a later side-effectful slice.
+- `GET /api/team/roster/agents/:agentId/workspace/status` refreshes the current
+  isolated worktree branch, head, dirty flag, and changed file list;
+- `POST /api/team/roster/agents/:agentId/workspace/remove` removes an isolated
+  worktree with `git worktree remove --force <path>` and marks the roster
+  workspace `removed`.
 
 ## API Sketch
 
@@ -525,6 +528,7 @@ GET /api/team/context
 GET /api/team/messages?agent=:agentId
 GET /api/team/inbox
 GET /api/team/trace/:id
+GET /api/team/roster/agents/:agentId/workspace/status
 ```
 
 Write:
@@ -536,6 +540,7 @@ POST /api/team/roster/agents
 POST /api/team/roster/leader
 POST /api/team/roster/agents/:agentId/remove
 POST /api/team/roster/agents/:agentId/workspace/ensure
+POST /api/team/roster/agents/:agentId/workspace/remove
 POST /api/team/tasks/:taskId/claim
 POST /api/team/tasks/:taskId/heartbeat
 POST /api/team/tasks/:taskId/needs-user
