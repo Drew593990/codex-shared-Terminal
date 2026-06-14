@@ -163,6 +163,7 @@ if ($OpenBrowser) {
     teamTaskRecoverStale = "$baseUrl/api/team/tasks/recover-stale"
     teamMessages = "$baseUrl/api/team/messages"
     teamTrace = "$baseUrl/api/team/trace/{id}"
+    teamAgentWorkspaceEnsure = "$baseUrl/api/team/roster/agents/{agentId}/workspace/ensure"
   }
   examples = @{
     directEcho = "Invoke-RestMethod -Method Post -Uri '$baseUrl/api/agents/echo/turns' -Headers @{ Authorization = 'Bearer $Token' } -ContentType 'application/json' -Body '{""conversationId"":""agent-smoke"",""prompt"":""Reply exactly: OK"",""terminalSession"":""main""}'"

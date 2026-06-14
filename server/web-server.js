@@ -165,6 +165,28 @@ async function defaultGitProvider(config = {}) {
   }
 }
 
+async function defaultWorktreeProvider(input) {
+  const cwd = input.cwd || process.cwd();
+  await execFileAsync('git', ['worktree', 'add', '-B', input.branch, input.path, 'HEAD'], {
+    cwd,
+    windowsHide: true
+  });
+  const head = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
+    cwd: input.path,
+    windowsHide: true
+  });
+  return {
+    path: input.path,
+    branch: input.branch,
+    status: 'ready',
+    head: head.stdout.trim()
+  };
+}
+
+const defaultWorktreeProviderAdapter = {
+  ensure: defaultWorktreeProvider
+};
+
 async function mergeContext(baseContext = {}, config = {}, sessionManager, gitProvider = defaultGitProvider) {
   const runtime = runtimeContext(config, sessionManager);
   const git = typeof gitProvider === 'function' ? await gitProvider(config) : null;
@@ -299,7 +321,7 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
   return completedParent;
 }
 
-function createWebServer({ sessionManager, config, conversationStore, teamStore, agentAdapter, gitProvider }) {
+function createWebServer({ sessionManager, config, conversationStore, teamStore, agentAdapter, gitProvider, worktreeProvider = defaultWorktreeProviderAdapter }) {
   const app = express();
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
@@ -419,6 +441,35 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
       requireTeamStore(teamStore);
       const agent = await teamStore.removeRosterAgent(request.params.agentId);
       response.json({ ok: true, agent });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/roster/agents/:agentId/workspace/ensure', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      const roster = await teamStore.listRoster();
+      const agent = roster.find((item) => item.agentId === request.params.agentId && item.status !== 'removed');
+      if (!agent) {
+        response.status(404).json({ ok: false, error: 'agent not found' });
+        return;
+      }
+      if (agent.workspace?.mode !== 'isolated') {
+        response.status(400).json({ ok: false, error: 'agent workspace is not isolated' });
+        return;
+      }
+      const result = await worktreeProvider.ensure({
+        cwd: config.cwd || process.cwd(),
+        agent,
+        path: agent.workspace.path,
+        branch: agent.workspace.branch
+      });
+      const updated = await teamStore.updateAgentWorkspace(agent.agentId, {
+        ...result,
+        status: result.status || 'ready'
+      });
+      response.json({ ok: true, agent: updated });
     } catch (error) {
       next(error);
     }

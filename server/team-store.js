@@ -446,6 +446,27 @@ class TeamStore {
     return updated;
   }
 
+  async updateAgentWorkspace(agentId, workspaceUpdates = {}) {
+    const safeAgentId = safeId(agentId, 'agentId');
+    const roster = await this.listRoster();
+    const previous = roster.find((agent) => agent.agentId === safeAgentId && agent.status !== 'removed');
+    if (!previous) {
+      throw new Error(`Unknown agent: ${safeAgentId}`);
+    }
+    const workspace = {
+      ...(previous.workspace || {}),
+      ...workspaceUpdates,
+      updatedAt: this.now()
+    };
+    const updated = await this.updateRosterAgent(safeAgentId, { workspace });
+    await this.appendEvent({
+      type: 'agent.workspace.updated',
+      agentId: safeAgentId,
+      data: { workspace }
+    });
+    return updated;
+  }
+
   async updateTask(taskId, updates = {}) {
     const safeTaskId = safeId(taskId, 'taskId');
     const previous = await this.getTask(safeTaskId);

@@ -89,7 +89,8 @@ To start and open the browser:
     "teamTaskFail": "http://127.0.0.1:7842/api/team/tasks/{taskId}/fail",
     "teamTaskRecoverStale": "http://127.0.0.1:7842/api/team/tasks/recover-stale",
     "teamMessages": "http://127.0.0.1:7842/api/team/messages",
-    "teamTrace": "http://127.0.0.1:7842/api/team/trace/{id}"
+    "teamTrace": "http://127.0.0.1:7842/api/team/trace/{id}",
+    "teamAgentWorkspaceEnsure": "http://127.0.0.1:7842/api/team/roster/agents/{agentId}/workspace/ensure"
   }
 }
 ```
@@ -175,9 +176,25 @@ The roster `agent` record includes a `workspace` plan:
 - `workspace.mode = "none"` means the agent should not assume a filesystem
   workspace.
 
-In the current slice, isolated workspaces are only planned metadata. Agents
-should not assume the directory already exists until a later worktree creation
-step marks it ready.
+When an isolated workspace is still `planned`, agents should not assume the
+directory already exists. Use the ensure call below before running filesystem
+work inside that checkout.
+
+Create a planned isolated workspace:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($share.baseUrl)/api/team/roster/agents/<agentId>/workspace/ensure" `
+  -Headers @{ Authorization = "Bearer $($share.token)" } `
+  -ContentType 'application/json' `
+  -Body '{}'
+```
+
+This write call only accepts agents whose `workspace.mode` is `isolated`. It
+runs `git worktree add -B <branch> <path> HEAD` from the configured project cwd,
+then updates the roster agent workspace to `ready`. Shared and disabled
+workspaces are rejected.
 
 The shared `context` also includes a runtime envelope:
 

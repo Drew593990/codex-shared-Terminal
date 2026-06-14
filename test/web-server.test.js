@@ -544,6 +544,76 @@ test('team APIs expose roster lifecycle, @team tasks, and messages', async () =>
   }
 });
 
+test('team workspace API ensures isolated agent worktrees and updates roster state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  const projectRoot = 'X:\\workspace\\project';
+  const calls = [];
+  const teamStore = new TeamStore(root, {
+    context: {
+      workspace: {
+        projectRoot,
+        cwd: projectRoot
+      }
+    },
+    profiles: {
+      researcher: { label: 'Researcher', mode: 'command', worktreeMode: 'isolated' }
+    }
+  });
+  const manager = createFakeManager();
+  const worktreeProvider = {
+    ensure: async (input) => {
+      calls.push(input);
+      return {
+        path: input.path,
+        branch: input.branch,
+        status: 'ready',
+        head: 'abc1234'
+      };
+    }
+  };
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    worktreeProvider,
+    config: { token: 'secret', publicDir: process.cwd(), cwd: projectRoot }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'researcher', agentId: 'researcher1' });
+
+    const response = await fetch(`${base}/api/team/roster/agents/researcher1/workspace/ensure`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const body = await response.json();
+    const roster = await teamStore.listRoster();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.agent.workspace.status, 'ready');
+    assert.equal(body.agent.workspace.head, 'abc1234');
+    assert.deepEqual(calls.map((call) => ({
+      cwd: call.cwd,
+      path: call.path,
+      branch: call.branch,
+      agentId: call.agent.agentId
+    })), [{
+      cwd: projectRoot,
+      path: path.join(projectRoot, '.worktrees', 'researcher1'),
+      branch: 'shareterminal/researcher1',
+      agentId: 'researcher1'
+    }]);
+    assert.equal(roster[0].workspace.status, 'ready');
+    assert.equal(roster[0].workspace.head, 'abc1234');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team dispatch API runs the assigned direct agent and exposes trace', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   const teamStore = new TeamStore(root, {

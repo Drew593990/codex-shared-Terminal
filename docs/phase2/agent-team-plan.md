@@ -504,8 +504,12 @@ Current implementation:
 - `isolated` uses `<projectRoot>\.worktrees\<agentId>` with branch
   `shareterminal/<agentId>` and is marked `planned`;
 - `none` records no path and is marked `disabled`;
-- actual `git worktree add`, branch creation, status checks, and cleanup are
-  intentionally left for a later side-effectful slice.
+- `POST /api/team/roster/agents/:agentId/workspace/ensure` creates an isolated
+  git worktree for planned isolated agents and marks the workspace `ready`;
+- the ensure operation uses `git worktree add -B <branch> <path> HEAD` from the
+  configured project cwd;
+- workspace cleanup and richer dirty/status reporting are intentionally left for
+  a later side-effectful slice.
 
 ## API Sketch
 
@@ -531,6 +535,7 @@ POST /api/team/agents
 POST /api/team/roster/agents
 POST /api/team/roster/leader
 POST /api/team/roster/agents/:agentId/remove
+POST /api/team/roster/agents/:agentId/workspace/ensure
 POST /api/team/tasks/:taskId/claim
 POST /api/team/tasks/:taskId/heartbeat
 POST /api/team/tasks/:taskId/needs-user
