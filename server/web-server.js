@@ -349,7 +349,7 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
   });
   await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', runningParent);
 
-  const workerResults = [];
+  const childAssignments = [];
   for (const worker of workerAgents) {
     const childTask = await teamStore.createChildTask(task.taskId, {
       title: `${worker.agentId}: ${task.title}`,
@@ -357,6 +357,10 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
       assignedTo: worker.agentId,
       createdBy: leaderAgent.agentId
     });
+    childAssignments.push({ worker, childTask });
+  }
+
+  const workerResults = await Promise.all(childAssignments.map(async ({ worker, childTask }) => {
     const completedChild = await runDirectTeamTask({
       teamStore,
       agentAdapter,
@@ -365,12 +369,12 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
       agent: worker,
       terminalSession: worker.session
     });
-    workerResults.push({
+    return {
       agentId: worker.agentId,
       taskId: childTask.taskId,
       result: completedChild.result || ''
-    });
-  }
+    };
+  }));
 
   const finalPrompt = [
     `Final delivery for task ${task.taskId}.`,

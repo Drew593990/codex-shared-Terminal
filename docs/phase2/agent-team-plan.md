@@ -432,6 +432,9 @@ Current implementation:
 
 - ShareTerminal-managed dispatch publishes running/completed/failed task notices
   into the selected visible terminal session;
+- `@team` dispatch creates child tasks for mentioned workers, starts those
+  worker direct turns concurrently, then sends all worker results to the leader
+  for final review;
 - external agent claim, heartbeat, completion, failure, user-input pause,
   resume, cancellation, retry, and stale recovery calls also publish compact
   visible notices;

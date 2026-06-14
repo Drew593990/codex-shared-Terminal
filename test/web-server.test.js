@@ -1438,6 +1438,105 @@ test('team dispatch splits mentioned workers and returns leader final delivery',
   }
 });
 
+test('team dispatch starts mentioned worker tasks concurrently before leader review', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-parallel-team-${++taskIndex}`,
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-parallel-team-${++index}`;
+    })()
+  });
+  const manager = createFakeManager();
+  const events = [];
+  const pendingWorkers = new Map();
+  const agentAdapter = {
+    calls: [],
+    listAgents: () => [{ name: 'echo', label: 'Echo', mode: 'echo' }],
+    runTurn(agent, input) {
+      const agentId = input.agent.agentId;
+      events.push(`start:${agentId}`);
+      this.calls.push({ agent, input });
+      if (agentId === 'echo1') {
+        return Promise.resolve({
+          agent,
+          reply: `leader:${input.workerResults.map((result) => result.agentId).join(',')}`,
+          status: 'completed'
+        });
+      }
+      return new Promise((resolve) => {
+        pendingWorkers.set(agentId, () => {
+          events.push(`finish:${agentId}`);
+          resolve({
+            agent,
+            reply: `worker:${agentId}`,
+            status: 'completed'
+          });
+        });
+      });
+    }
+  };
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+  const waitFor = async (predicate, timeoutMs = 200) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (predicate()) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return predicate();
+  };
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo3' });
+    const task = await teamStore.createTask({
+      title: 'Parallel team split',
+      prompt: '@team ask @echo2 and @echo3 to inspect separate files, then produce one checked delivery',
+      createdBy: 'codex',
+      assignedTo: '@team'
+    });
+
+    const dispatchPromise = fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+    const bothWorkersStarted = await waitFor(() => (
+      events.includes('start:echo2') && events.includes('start:echo3')
+    ));
+
+    pendingWorkers.get('echo2')?.();
+    await waitFor(() => pendingWorkers.has('echo3'));
+    pendingWorkers.get('echo3')?.();
+    const dispatchResponse = await dispatchPromise;
+    const dispatchBody = await dispatchResponse.json();
+
+    assert.equal(bothWorkersStarted, true);
+    assert.equal(dispatchResponse.status, 200);
+    assert.equal(dispatchBody.task.status, 'completed');
+    assert.deepEqual(events.slice(0, 2).sort(), ['start:echo2', 'start:echo3']);
+    assert.equal(events.includes('start:echo1'), true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team dispatch splits profile mentions to concrete idle workers', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   let taskIndex = 0;
