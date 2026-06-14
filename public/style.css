@@ -158,6 +158,32 @@ button:hover {
   font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
 }
 
+.terminal-pane-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #aeb7c2;
+}
+
+.terminal-pane-role,
+.terminal-pane-task,
+.terminal-pane-workspace {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.terminal-pane-role {
+  color: #8bd49c;
+}
+
+.terminal-pane-task {
+  color: #f4bf75;
+}
+
 .terminal-pane-status {
   color: #8bd49c;
   white-space: nowrap;

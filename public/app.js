@@ -50,10 +50,14 @@
     });
   }
 
-  function createPaneElement(sessionName, label) {
+  function createPaneElement(sessionName, label, primary = false) {
     const pane = document.createElement('article');
     pane.className = 'terminal-pane';
     pane.dataset.session = sessionName;
+    pane.setAttribute('data-agent-id', sessionName);
+    pane.dataset.agentId = sessionName;
+    pane.dataset.role = primary ? 'main' : 'agent';
+    pane.dataset.taskStatus = 'idle';
 
     const header = document.createElement('div');
     header.className = 'terminal-pane-header';
@@ -62,6 +66,21 @@
     name.className = 'terminal-pane-name';
     name.textContent = label || sessionName;
 
+    const meta = document.createElement('div');
+    meta.className = 'terminal-pane-meta';
+
+    const role = document.createElement('span');
+    role.className = 'terminal-pane-role';
+    role.textContent = primary ? 'main' : 'agent';
+
+    const task = document.createElement('span');
+    task.className = 'terminal-pane-task';
+    task.textContent = 'idle';
+
+    const workspace = document.createElement('span');
+    workspace.className = 'terminal-pane-workspace';
+    workspace.textContent = '';
+
     const state = document.createElement('span');
     state.className = 'terminal-pane-status';
     state.textContent = 'connecting';
@@ -69,10 +88,27 @@
     const body = document.createElement('div');
     body.className = 'terminal-pane-body';
 
-    header.append(name, state);
+    meta.append(role, task, workspace);
+    header.append(name, meta, state);
     pane.append(header, body);
     terminalEl.appendChild(pane);
-    return { pane, body, state };
+    return { pane, body, state, role, task, workspace };
+  }
+
+  function updatePaneMetadata(entry, agent = {}) {
+    if (!entry || !entry.elements) {
+      return;
+    }
+    const agentId = agent.agentId || entry.sessionName;
+    const role = agent.role || (entry.primary ? 'main' : 'agent');
+    const taskState = agent.activeTaskId || agent.status || 'idle';
+    entry.elements.pane.setAttribute('data-agent-id', agentId);
+    entry.elements.pane.dataset.agentId = agentId;
+    entry.elements.pane.dataset.role = role;
+    entry.elements.pane.dataset.taskStatus = agent.status || 'idle';
+    entry.elements.role.textContent = role;
+    entry.elements.task.textContent = taskState;
+    entry.elements.workspace.textContent = formatAgentWorkspace(agent);
   }
 
   function connectPane(sessionName, label, primary = false) {
@@ -80,7 +116,7 @@
     if (existing) {
       return existing;
     }
-    const elements = createPaneElement(sessionName, label);
+    const elements = createPaneElement(sessionName, label, primary);
     const paneTerminal = createTerminal();
     const paneFit = new FitAddon.FitAddon();
     paneTerminal.loadAddon(paneFit);
@@ -148,9 +184,11 @@
         sendPaneResize();
       },
       focus: () => paneTerminal.focus(),
+      elements,
       primary
     };
     terminalPanes.set(sessionName, entry);
+    updatePaneMetadata(entry);
     return entry;
   }
 
@@ -468,7 +506,8 @@
       .filter((agent) => agent.status !== 'removed')
       .forEach((agent) => {
         const sessionName = agent.session || agent.agentId;
-        connectPane(sessionName, `${agent.agentId} (${agent.role || 'worker'})`);
+        const entry = connectPane(sessionName, `${agent.agentId} (${agent.role || 'worker'})`);
+        updatePaneMetadata(entry, agent);
       });
     refitTerminal();
   }
