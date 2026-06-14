@@ -1,6 +1,7 @@
 const http = require('node:http');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
+const { readFile } = require('node:fs/promises');
 const { promisify } = require('node:util');
 const express = require('express');
 const { WebSocketServer } = require('ws');
@@ -24,8 +25,14 @@ function requireToken(expectedToken) {
 }
 
 function sendVendorFile(rootDir, packagePath) {
-  return (request, response) => {
-    response.sendFile(path.join(rootDir, 'node_modules', ...packagePath));
+  return async (request, response, next) => {
+    try {
+      const filePath = path.join(rootDir, 'node_modules', ...packagePath);
+      const body = await readFile(filePath);
+      response.type(path.extname(filePath)).send(body);
+    } catch (error) {
+      next(error);
+    }
   };
 }
 

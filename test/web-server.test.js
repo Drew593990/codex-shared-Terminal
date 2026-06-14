@@ -224,6 +224,25 @@ test('GET /api/sessions returns available sessions', async () => {
   }
 });
 
+test('GET /vendor/xterm/xterm.js serves browser terminal bundle', async () => {
+  const { server } = createWebServer({
+    sessionManager: createFakeManager(),
+    config: { token: 'secret', publicDir: process.cwd(), rootDir: path.resolve(__dirname, '..') }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const response = await fetch(`http://127.0.0.1:${port}/vendor/xterm/xterm.js`);
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(body, /Terminal/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('POST /api/sessions/:name/input rejects missing token', async () => {
   const { server } = createWebServer({
     sessionManager: createFakeManager(),
