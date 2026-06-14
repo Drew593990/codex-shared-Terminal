@@ -819,6 +819,13 @@ test('team agent inbox API returns messages, assigned tasks, and context', async
   const { server } = createWebServer({
     sessionManager: manager,
     teamStore,
+    gitProvider: async () => ({
+      available: true,
+      branch: 'phase2',
+      commit: 'abc1234',
+      dirty: true,
+      changedFiles: ['server/web-server.js']
+    }),
     config: {
       token: 'secret',
       publicDir: process.cwd(),
@@ -856,6 +863,13 @@ test('team agent inbox API returns messages, assigned tasks, and context', async
     assert.equal(inboxBody.inbox.context.leader.agentId, 'echo1');
     assert.equal(inboxBody.inbox.context.workspace.cwd, 'X:\\workspace\\project');
     assert.equal(inboxBody.inbox.context.runtime.shell, 'powershell.exe');
+    assert.deepEqual(inboxBody.inbox.context.git, {
+      available: true,
+      branch: 'phase2',
+      commit: 'abc1234',
+      dirty: true,
+      changedFiles: ['server/web-server.js']
+    });
     assert.deepEqual(inboxBody.inbox.context.terminalSessions.map((session) => session.name), ['main', 'echo2']);
     assert.equal(inboxBody.inbox.terminal.session, 'echo2');
     assert.equal(inboxBody.inbox.terminal.profileId, 'echo');
@@ -863,6 +877,12 @@ test('team agent inbox API returns messages, assigned tasks, and context', async
     assert.equal(inboxBody.inbox.terminal.activeSession.name, 'echo2');
     assert.equal(inboxBody.inbox.terminal.activeSession.cwd, 'test-cwd');
     assert.equal(inboxBody.inbox.terminal.recentTranscript[0].data, 'ready');
+
+    const contextResponse = await fetch(`${base}/api/team/context`);
+    const contextBody = await contextResponse.json();
+    assert.equal(contextResponse.status, 200);
+    assert.equal(contextBody.context.git.branch, 'phase2');
+    assert.equal(contextBody.context.git.dirty, true);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });

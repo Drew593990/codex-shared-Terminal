@@ -1,7 +1,11 @@
 const http = require('node:http');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const express = require('express');
 const { WebSocketServer } = require('ws');
+
+const execFileAsync = promisify(execFile);
 
 function parseLimit(value) {
   const limit = Number.parseInt(value, 10);
@@ -132,8 +136,38 @@ function runtimeContext(config = {}, sessionManager) {
   };
 }
 
-function mergeContext(baseContext = {}, config = {}, sessionManager) {
+async function defaultGitProvider(config = {}) {
+  const cwd = config.cwd || process.cwd();
+  try {
+    const [branch, commit, status] = await Promise.all([
+      execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, windowsHide: true }),
+      execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd, windowsHide: true }),
+      execFileAsync('git', ['status', '--porcelain'], { cwd, windowsHide: true })
+    ]);
+    const changedFiles = status.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.slice(3).trim())
+      .filter(Boolean);
+    return {
+      available: true,
+      branch: branch.stdout.trim(),
+      commit: commit.stdout.trim(),
+      dirty: changedFiles.length > 0,
+      changedFiles
+    };
+  } catch (error) {
+    return {
+      available: false,
+      error: error.message
+    };
+  }
+}
+
+async function mergeContext(baseContext = {}, config = {}, sessionManager, gitProvider = defaultGitProvider) {
   const runtime = runtimeContext(config, sessionManager);
+  const git = typeof gitProvider === 'function' ? await gitProvider(config) : null;
   return {
     ...baseContext,
     workspace: {
@@ -144,6 +178,7 @@ function mergeContext(baseContext = {}, config = {}, sessionManager) {
       ...runtime.runtime,
       ...(baseContext.runtime || {})
     },
+    git,
     terminalSessions: runtime.terminalSessions
   };
 }
@@ -264,7 +299,7 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
   return completedParent;
 }
 
-function createWebServer({ sessionManager, config, conversationStore, teamStore, agentAdapter }) {
+function createWebServer({ sessionManager, config, conversationStore, teamStore, agentAdapter, gitProvider }) {
   const app = express();
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
@@ -326,7 +361,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
       response.json({
         inbox: {
           ...inbox,
-          context: mergeContext(inbox.context, config, sessionManager),
+          context: await mergeContext(inbox.context, config, sessionManager, gitProvider),
           terminal: {
             session: sessionName,
             profileId: inbox.agent.profileId,
@@ -579,7 +614,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
   app.get('/api/team/context', async (request, response, next) => {
     try {
       requireTeamStore(teamStore);
-      response.json({ context: mergeContext(await teamStore.getContext(), config, sessionManager) });
+      response.json({ context: await mergeContext(await teamStore.getContext(), config, sessionManager, gitProvider) });
     } catch (error) {
       next(error);
     }

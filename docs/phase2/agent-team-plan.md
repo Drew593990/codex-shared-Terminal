@@ -363,9 +363,12 @@ Current implementation:
 
 - `context.workspace` exposes the server project root and cwd;
 - `context.runtime` exposes platform, shell, and process id;
+- `context.git` exposes branch, short commit, dirty state, and changed files
+  when the workspace is a git checkout;
 - `context.terminalSessions` exposes initialized visible terminal sessions and
   their command/cwd/client metadata;
-- git branch/status summary remains a later extension.
+- if git cannot be read, `context.git.available` is `false` and includes an
+  error message.
 
 ### Agent Messages
 

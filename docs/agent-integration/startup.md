@@ -173,9 +173,16 @@ The shared `context` also includes a runtime envelope:
   working directory known to the ShareTerminal server;
 - `runtime.platform`, `runtime.shell`, and `runtime.pid`: local process summary
   for environment-aware agents;
+- `git.available`, `git.branch`, `git.commit`, `git.dirty`, and
+  `git.changedFiles`: current repository summary when `git` is available from
+  the configured workspace;
 - `terminalSessions`: currently visible or initialized terminal sessions,
   including session name, command, args, cwd, client count, and created time
   when available.
+
+If the workspace is not a git checkout or `git` cannot be executed,
+`context.git.available` is `false` and `context.git.error` contains the local
+failure message.
 
 Claim a queued task before working on it:
 
