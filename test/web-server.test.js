@@ -1110,6 +1110,8 @@ test('team claim API supports agent heartbeat and stale recovery', async () => {
     const heartbeatBody = await heartbeatResponse.json();
     assert.equal(heartbeatResponse.status, 200);
     assert.equal(heartbeatBody.task.leaseExpiresAt, '2026-06-14T03:11:00.000Z');
+    assert.match(manager.systemMessages.at(-1).data, /\[team heartbeat\] task-claim-api-1/);
+    assert.match(manager.systemMessages.at(-1).data, /leaseExpiresAt=2026-06-14T03:11:00.000Z/);
 
     const recoverResponse = await fetch(`${base}/api/team/tasks/recover-stale`, {
       method: 'POST',
@@ -1121,6 +1123,8 @@ test('team claim API supports agent heartbeat and stale recovery', async () => {
     assert.equal(recoverBody.tasks.length, 1);
     assert.equal(recoverBody.tasks[0].status, 'queued');
     assert.equal(recoverBody.tasks[0].error, 'lease expired');
+    assert.match(manager.systemMessages.at(-1).data, /\[team recovered\] task-claim-api-1/);
+    assert.match(manager.systemMessages.at(-1).data, /lease expired/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -1178,6 +1182,7 @@ test('team claimed task API accepts claimant completion and leader handoff', asy
     const leaderInboxResponse = await fetch(`${base}/api/team/agents/echo1/inbox`);
     const leaderInboxBody = await leaderInboxResponse.json();
     assert.match(leaderInboxBody.inbox.messages.at(-1).body, /api worker result/);
+    assert.equal(manager.systemMessages.at(-1).name, 'echo2');
     assert.match(manager.systemMessages.at(-1).data, /\[team completed\] task-submit-api-1/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -1232,6 +1237,7 @@ test('team claimed task API records claimant failure for retry', async () => {
     const inboxBody = await inboxResponse.json();
     assert.equal(inboxBody.items[0].type, 'task_failure');
     assert.equal(inboxBody.items[0].summary, 'api worker failure');
+    assert.equal(manager.systemMessages.at(-1).name, 'echo2');
     assert.match(manager.systemMessages.at(-1).data, /\[team failed\] task-fail-api-1/);
   } finally {
     await new Promise((resolve) => server.close(resolve));

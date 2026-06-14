@@ -428,6 +428,16 @@ Rules:
 - write every state transition to the task event log;
 - never silently consume a result without recording it.
 
+Current implementation:
+
+- ShareTerminal-managed dispatch publishes running/completed/failed task notices
+  into the selected visible terminal session;
+- external agent claim, heartbeat, completion, failure, user-input pause,
+  resume, cancellation, retry, and stale recovery calls also publish compact
+  visible notices;
+- when no `terminalSession` is provided, task lifecycle notices prefer the
+  request `agentId`, current claimant, last attempt agent, leader, then `main`.
+
 ### Inbox / Ack
 
 Purpose: make results actionable.

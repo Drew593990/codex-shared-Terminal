@@ -100,10 +100,14 @@ function formatDirectTurnNotice(turn) {
   return `\r\n[${turn.agent} ${status}] ${turn.turnId || ''}\r\n> ${prompt}\r\n${result}\r\n`;
 }
 
-function formatTeamTaskNotice(task) {
+function formatTeamTaskNotice(task, options = {}) {
+  const status = options.status || task.status || 'unknown';
   const prompt = oneLine(task.prompt, 240);
   const leader = task.leaderAgentId ? ` leader=${task.leaderAgentId}` : '';
-  return `\r\n[team ${task.status}] ${task.taskId || ''}${leader}\r\n> ${prompt}\r\n`;
+  const claimedBy = task.claimedBy ? ` claimedBy=${task.claimedBy}` : '';
+  const lease = task.leaseExpiresAt ? ` leaseExpiresAt=${task.leaseExpiresAt}` : '';
+  const error = task.error ? ` error=${oneLine(task.error, 180)}` : '';
+  return `\r\n[team ${status}] ${task.taskId || ''}${leader}${claimedBy}${lease}${error}\r\n> ${prompt}\r\n`;
 }
 
 async function publishDirectTurnNotice(sessionManager, sessionName, turn) {
@@ -113,11 +117,11 @@ async function publishDirectTurnNotice(sessionManager, sessionName, turn) {
   await sessionManager.publishSystem(sessionName || 'main', formatDirectTurnNotice(turn));
 }
 
-async function publishTeamTaskNotice(sessionManager, sessionName, task) {
+async function publishTeamTaskNotice(sessionManager, sessionName, task, options = {}) {
   if (typeof sessionManager.publishSystem !== 'function') {
     return;
   }
-  await sessionManager.publishSystem(sessionName || 'main', formatTeamTaskNotice(task));
+  await sessionManager.publishSystem(sessionName || 'main', formatTeamTaskNotice(task, options));
 }
 
 function runtimeContext(config = {}, sessionManager) {
@@ -265,6 +269,16 @@ async function activeIsolatedWorkspaceAgent(teamStore, agentId) {
     return { error: { statusCode: 400, message: 'agent workspace is not isolated' } };
   }
   return { agent };
+}
+
+function terminalSessionForTask(body = {}, task = {}) {
+  return body.terminalSession ||
+    body.session ||
+    body.agentId ||
+    task.claimedBy ||
+    task.attempts?.at(-1)?.agentId ||
+    task.leaderAgentId ||
+    'main';
 }
 
 function worktreeInput(config, agent) {
@@ -596,6 +610,14 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     try {
       requireTeamStore(teamStore);
       const tasks = await teamStore.recoverStaleTasks(request.body || {});
+      for (const task of tasks) {
+        await publishTeamTaskNotice(
+          sessionManager,
+          terminalSessionForTask(request.body, task),
+          task,
+          { status: 'recovered' }
+        );
+      }
       response.json({ ok: true, tasks });
     } catch (error) {
       next(error);
@@ -617,6 +639,12 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     try {
       requireTeamStore(teamStore);
       const task = await teamStore.heartbeatTask(request.params.taskId, request.body || {});
+      await publishTeamTaskNotice(
+        sessionManager,
+        terminalSessionForTask(request.body, task),
+        task,
+        { status: 'heartbeat' }
+      );
       response.json({ ok: true, task });
     } catch (error) {
       next(error);
@@ -627,7 +655,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     try {
       requireTeamStore(teamStore);
       const task = await teamStore.completeClaimedTask(request.params.taskId, request.body || {});
-      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || task.claimedBy || task.leaderAgentId || 'main', task);
+      await publishTeamTaskNotice(sessionManager, terminalSessionForTask(request.body, task), task);
       response.json({ ok: true, task });
     } catch (error) {
       next(error);
@@ -638,7 +666,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     try {
       requireTeamStore(teamStore);
       const task = await teamStore.failClaimedTask(request.params.taskId, request.body || {});
-      await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || task.leaderAgentId || 'main', task);
+      await publishTeamTaskNotice(sessionManager, terminalSessionForTask(request.body, task), task);
       response.json({ ok: true, task });
     } catch (error) {
       next(error);

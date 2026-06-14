@@ -270,6 +270,11 @@ Invoke-RestMethod `
   -Body $body
 ```
 
+Claim and heartbeat calls publish compact team notices into the visible terminal
+transcript. If `terminalSession` is not supplied, ShareTerminal uses the
+claiming agent id as the session name, then falls back to the task's current
+claim, last attempt agent, leader, and finally `main`.
+
 Pause for user input when the agent cannot continue safely:
 
 ```powershell
@@ -345,9 +350,11 @@ Invoke-RestMethod `
   -Body $body
 ```
 
-Completed and failed submissions create inbox items and trace events. If the
-task has a separate leader, ShareTerminal also sends a handoff message to the
-leader's team inbox.
+Completed and failed submissions create inbox items, trace events, and visible
+terminal notices. If the task has a separate leader, ShareTerminal also sends a
+handoff message to the leader's team inbox. Without an explicit
+`terminalSession`, the completion or failure notice is written to the claimant's
+visible session.
 
 Trace a task from any visible team record:
 
@@ -376,6 +383,9 @@ Invoke-RestMethod `
   -ContentType 'application/json' `
   -Body $body
 ```
+
+Recovered tasks publish `[team recovered]` notices to the relevant visible
+session and return to `queued` so they can be claimed again.
 
 Claiming and heartbeat are for external agents that manage their own execution.
 For ShareTerminal-managed direct turns, use `/api/team/tasks/{taskId}/dispatch`
