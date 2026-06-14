@@ -1537,6 +1537,173 @@ test('team dispatch starts mentioned worker tasks concurrently before leader rev
   }
 });
 
+test('team dispatch fails parent task when a split worker fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  let inboxIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-split-fail-${++taskIndex}`,
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-split-fail-${++index}`;
+    })(),
+    inboxIdFactory: () => `inbox-split-fail-${++inboxIndex}`
+  });
+  const manager = createFakeManager();
+  const agentAdapter = {
+    calls: [],
+    listAgents: () => [{ name: 'echo', label: 'Echo', mode: 'echo' }],
+    async runTurn(agent, input) {
+      this.calls.push({ agent, input });
+      if (input.agent.agentId === 'echo2') {
+        throw new Error('worker echo2 exploded');
+      }
+      return {
+        agent,
+        reply: `worker:${input.agent.agentId}`,
+        status: 'completed'
+      };
+    }
+  };
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo3' });
+    const task = await teamStore.createTask({
+      title: 'Split failure',
+      prompt: '@team ask @echo2 and @echo3 to inspect separate files',
+      createdBy: 'codex',
+      assignedTo: '@team'
+    });
+
+    const dispatchResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+    const dispatchBody = await dispatchResponse.json();
+    const failedParent = await teamStore.getTask(task.taskId);
+
+    assert.equal(dispatchResponse.status, 500);
+    assert.equal(dispatchBody.error, 'worker echo2 exploded');
+    assert.equal(failedParent.status, 'failed');
+    assert.equal(failedParent.error, 'worker echo2 exploded');
+
+    const inboxResponse = await fetch(`${base}/api/team/inbox`);
+    const inboxBody = await inboxResponse.json();
+    assert.equal(inboxResponse.status, 200);
+    assert.equal(inboxBody.items.some((item) => (
+      item.taskId === task.taskId &&
+      item.type === 'task_failure' &&
+      item.summary === 'worker echo2 exploded'
+    )), true);
+
+    const traceResponse = await fetch(`${base}/api/team/trace/${task.taskId}`);
+    const traceBody = await traceResponse.json();
+    assert.equal(traceResponse.status, 200);
+    assert.equal(traceBody.trace.task.status, 'failed');
+    assert.equal(traceBody.trace.events.some((event) => (
+      event.type === 'task.failed' && event.taskId === task.taskId
+    )), true);
+    assert.match(manager.systemMessages.at(-1).data, /\[team failed\] task-split-fail-1/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('team dispatch fails parent task when a split worker returns failed status', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-split-status-fail-${++taskIndex}`,
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-split-status-fail-${++index}`;
+    })(),
+    inboxIdFactory: (() => {
+      let index = 0;
+      return () => `inbox-split-status-fail-${++index}`;
+    })()
+  });
+  const manager = createFakeManager();
+  const agentAdapter = {
+    calls: [],
+    listAgents: () => [{ name: 'echo', label: 'Echo', mode: 'echo' }],
+    async runTurn(agent, input) {
+      this.calls.push({ agent, input });
+      if (input.agent.agentId === 'echo2') {
+        return {
+          agent,
+          reply: '',
+          status: 'failed',
+          error: 'worker echo2 returned failed status'
+        };
+      }
+      return {
+        agent,
+        reply: `worker:${input.agent.agentId}`,
+        status: 'completed'
+      };
+    }
+  };
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo3' });
+    const task = await teamStore.createTask({
+      title: 'Split status failure',
+      prompt: '@team ask @echo2 and @echo3 to inspect separate files',
+      createdBy: 'codex',
+      assignedTo: '@team'
+    });
+
+    const dispatchResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+    const dispatchBody = await dispatchResponse.json();
+    const failedParent = await teamStore.getTask(task.taskId);
+    const childTasks = (await teamStore.listTasks()).filter((item) => item.parentTaskId === task.taskId);
+
+    assert.equal(dispatchResponse.status, 500);
+    assert.equal(dispatchBody.error, 'worker echo2 returned failed status');
+    assert.equal(failedParent.status, 'failed');
+    assert.equal(childTasks.find((item) => item.assignedTo === 'echo2').status, 'failed');
+    assert.equal(childTasks.find((item) => item.assignedTo === 'echo2').error, 'worker echo2 returned failed status');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team dispatch splits profile mentions to concrete idle workers', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   let taskIndex = 0;

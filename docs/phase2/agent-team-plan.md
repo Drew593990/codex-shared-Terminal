@@ -435,6 +435,11 @@ Current implementation:
 - `@team` dispatch creates child tasks for mentioned workers, starts those
   worker direct turns concurrently, then sends all worker results to the leader
   for final review;
+- if a split worker or the leader review fails, the parent task is marked
+  `failed`, a retryable inbox item is created, and the visible terminal receives
+  a failure notice;
+- both thrown adapter errors and normalized adapter results with
+  `status = "failed"` are treated as task failures;
 - external agent claim, heartbeat, completion, failure, user-input pause,
   resume, cancellation, retry, and stale recovery calls also publish compact
   visible notices;

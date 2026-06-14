@@ -325,6 +325,9 @@ async function runDirectTeamTask({ teamStore, agentAdapter, sessionManager, task
       task,
       agent
     });
+    if (result.status === 'failed') {
+      throw new Error(result.error || result.reply || 'agent run failed');
+    }
     const completedTask = await teamStore.completeTask(task.taskId, {
       agentId: agent.agentId,
       result: result.reply || result.error || '',
@@ -349,60 +352,69 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
   });
   await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', runningParent);
 
-  const childAssignments = [];
-  for (const worker of workerAgents) {
-    const childTask = await teamStore.createChildTask(task.taskId, {
-      title: `${worker.agentId}: ${task.title}`,
-      prompt: `Parent task ${task.taskId}\nAssigned agent: @${worker.agentId}\n\n${task.prompt}`,
-      assignedTo: worker.agentId,
-      createdBy: leaderAgent.agentId
+  try {
+    const childAssignments = [];
+    for (const worker of workerAgents) {
+      const childTask = await teamStore.createChildTask(task.taskId, {
+        title: `${worker.agentId}: ${task.title}`,
+        prompt: `Parent task ${task.taskId}\nAssigned agent: @${worker.agentId}\n\n${task.prompt}`,
+        assignedTo: worker.agentId,
+        createdBy: leaderAgent.agentId
+      });
+      childAssignments.push({ worker, childTask });
+    }
+
+    const workerResults = await Promise.all(childAssignments.map(async ({ worker, childTask }) => {
+      const completedChild = await runDirectTeamTask({
+        teamStore,
+        agentAdapter,
+        sessionManager,
+        task: childTask,
+        agent: worker,
+        terminalSession: worker.session
+      });
+      return {
+        agentId: worker.agentId,
+        taskId: childTask.taskId,
+        result: completedChild.result || ''
+      };
+    }));
+
+    const finalPrompt = [
+      `Final delivery for task ${task.taskId}.`,
+      '',
+      'Original request:',
+      task.prompt,
+      '',
+      'Worker results:',
+      ...workerResults.map((result) => `- @${result.agentId} (${result.taskId}): ${result.result}`),
+      '',
+      'Check the worker results against the original request and produce one concise final delivery.'
+    ].join('\n');
+    const leaderResult = await agentAdapter.runTurn(leaderAgent.profileId, {
+      prompt: finalPrompt,
+      conversation: null,
+      task,
+      agent: leaderAgent,
+      workerResults
     });
-    childAssignments.push({ worker, childTask });
+    const completedParent = await teamStore.completeTask(task.taskId, {
+      agentId: leaderAgent.agentId,
+      result: leaderResult.reply || leaderResult.error || finalPrompt,
+      turnId: leaderResult.turnId || null,
+      reviewedBy: leaderAgent.agentId,
+      reviewStatus: 'checked'
+    });
+    await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', completedParent);
+    return completedParent;
+  } catch (error) {
+    const failedParent = await teamStore.failTask(task.taskId, {
+      agentId: leaderAgent.agentId,
+      error: error.message
+    });
+    await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', failedParent);
+    throw error;
   }
-
-  const workerResults = await Promise.all(childAssignments.map(async ({ worker, childTask }) => {
-    const completedChild = await runDirectTeamTask({
-      teamStore,
-      agentAdapter,
-      sessionManager,
-      task: childTask,
-      agent: worker,
-      terminalSession: worker.session
-    });
-    return {
-      agentId: worker.agentId,
-      taskId: childTask.taskId,
-      result: completedChild.result || ''
-    };
-  }));
-
-  const finalPrompt = [
-    `Final delivery for task ${task.taskId}.`,
-    '',
-    'Original request:',
-    task.prompt,
-    '',
-    'Worker results:',
-    ...workerResults.map((result) => `- @${result.agentId} (${result.taskId}): ${result.result}`),
-    '',
-    'Check the worker results against the original request and produce one concise final delivery.'
-  ].join('\n');
-  const leaderResult = await agentAdapter.runTurn(leaderAgent.profileId, {
-    prompt: finalPrompt,
-    conversation: null,
-    task,
-    agent: leaderAgent,
-    workerResults
-  });
-  const completedParent = await teamStore.completeTask(task.taskId, {
-    agentId: leaderAgent.agentId,
-    result: leaderResult.reply || leaderResult.error || finalPrompt,
-    turnId: leaderResult.turnId || null,
-    reviewedBy: leaderAgent.agentId,
-    reviewStatus: 'checked'
-  });
-  await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', completedParent);
-  return completedParent;
 }
 
 function createWebServer({ sessionManager, config, conversationStore, teamStore, agentAdapter, gitProvider, worktreeProvider = defaultWorktreeProviderAdapter }) {
