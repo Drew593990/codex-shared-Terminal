@@ -227,6 +227,18 @@
     };
   }
 
+  function formatAgentWorkspace(agent) {
+    const workspace = agent.workspace || {};
+    if (!workspace.mode) {
+      return '';
+    }
+    return [
+      workspace.mode,
+      workspace.status,
+      workspace.path
+    ].filter(Boolean).join(' | ');
+  }
+
   function renderTeamAgent(agent) {
     const item = document.createElement('article');
     item.className = 'team-agent';
@@ -247,8 +259,15 @@
     meta.className = 'team-agent-meta';
     meta.textContent = `${agent.profileId || ''} | ${agent.status || 'idle'} | ${agent.activeTaskId || 'no task'}`;
 
+    const workspace = document.createElement('div');
+    workspace.className = 'team-agent-workspace';
+    workspace.textContent = formatAgentWorkspace(agent);
+
     main.append(id, role);
     item.append(main, meta);
+    if (workspace.textContent) {
+      item.append(workspace);
+    }
     return item;
   }
 
@@ -389,9 +408,9 @@
     const trace = document.createElement('button');
     trace.type = 'button';
     trace.textContent = 'Trace';
-    trace.disabled = !item.taskId;
+    trace.disabled = !item.inboxId;
     trace.addEventListener('click', () => {
-      loadTeamTrace(item.taskId).catch((error) => setTeamStatus(error.message, 'error'));
+      loadTeamTrace(item.inboxId).catch((error) => setTeamStatus(error.message, 'error'));
     });
 
     main.append(title, status);
@@ -471,7 +490,15 @@
     }
 
     const signature = JSON.stringify({
-      roster: rosterBody.roster.map((agent) => [agent.agentId, agent.role, agent.status, agent.activeTaskId]),
+      roster: rosterBody.roster.map((agent) => [
+        agent.agentId,
+        agent.role,
+        agent.status,
+        agent.activeTaskId,
+        agent.workspace?.mode,
+        agent.workspace?.status,
+        agent.workspace?.path
+      ]),
       messages: messagesBody.messages.map((message) => [message.messageId, message.status])
     });
     if (signature === lastTeamSignature && options.silent) {
