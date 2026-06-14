@@ -281,6 +281,10 @@ function terminalSessionForTask(body = {}, task = {}) {
     'main';
 }
 
+function agentSession(agent = {}) {
+  return agent.session || agent.agentId || null;
+}
+
 function worktreeInput(config, agent) {
   const cwd = path.resolve(config.cwd || process.cwd());
   const workspacePath = path.resolve(agent.workspace.path || '');
@@ -313,11 +317,12 @@ function mentionedRosterAgents(task, roster) {
 }
 
 async function runDirectTeamTask({ teamStore, agentAdapter, sessionManager, task, agent, terminalSession }) {
+  const noticeSession = agentSession(agent) || terminalSession || 'main';
   const runningTask = await teamStore.startTask(task.taskId, {
     agentId: agent.agentId,
     mode: 'direct'
   });
-  await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', runningTask);
+  await publishTeamTaskNotice(sessionManager, noticeSession, runningTask);
   try {
     const result = await agentAdapter.runTurn(agent.profileId, {
       prompt: task.prompt,
@@ -333,24 +338,25 @@ async function runDirectTeamTask({ teamStore, agentAdapter, sessionManager, task
       result: result.reply || result.error || '',
       turnId: result.turnId || null
     });
-    await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', completedTask);
+    await publishTeamTaskNotice(sessionManager, noticeSession, completedTask);
     return completedTask;
   } catch (error) {
     const failedTask = await teamStore.failTask(task.taskId, {
       agentId: agent.agentId,
       error: error.message
     });
-    await publishTeamTaskNotice(sessionManager, terminalSession || agent.session || 'main', failedTask);
+    await publishTeamTaskNotice(sessionManager, noticeSession, failedTask);
     throw error;
   }
 }
 
 async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, task, leaderAgent, workerAgents, terminalSession }) {
+  const leaderSession = agentSession(leaderAgent) || terminalSession || 'main';
   const runningParent = await teamStore.startTask(task.taskId, {
     agentId: leaderAgent.agentId,
     mode: 'team'
   });
-  await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', runningParent);
+  await publishTeamTaskNotice(sessionManager, leaderSession, runningParent);
 
   try {
     const childAssignments = [];
@@ -371,7 +377,7 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
         sessionManager,
         task: childTask,
         agent: worker,
-        terminalSession: worker.session
+        terminalSession: agentSession(worker) || terminalSession
       });
       return {
         agentId: worker.agentId,
@@ -405,14 +411,14 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
       reviewedBy: leaderAgent.agentId,
       reviewStatus: 'checked'
     });
-    await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', completedParent);
+    await publishTeamTaskNotice(sessionManager, leaderSession, completedParent);
     return completedParent;
   } catch (error) {
     const failedParent = await teamStore.failTask(task.taskId, {
       agentId: leaderAgent.agentId,
       error: error.message
     });
-    await publishTeamTaskNotice(sessionManager, terminalSession || leaderAgent.session || 'main', failedParent);
+    await publishTeamTaskNotice(sessionManager, leaderSession, failedParent);
     throw error;
   }
 }
