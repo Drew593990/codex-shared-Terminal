@@ -1,4 +1,4 @@
-const { loadConfig } = require('./config');
+const { loadConfig, teamStoreContext } = require('./config');
 const { TranscriptStore } = require('./transcript-store');
 const { ConversationStore } = require('./conversation-store');
 const { TeamStore } = require('./team-store');
@@ -9,7 +9,10 @@ const { createWebServer } = require('./web-server');
 const config = loadConfig();
 const transcriptStore = new TranscriptStore(config.transcriptDir);
 const conversationStore = new ConversationStore(config.conversationDir);
-const teamStore = new TeamStore(config.teamDir, { profiles: config.agentProfiles });
+const teamStore = new TeamStore(config.teamDir, {
+  profiles: config.agentProfiles,
+  context: teamStoreContext(config)
+});
 const sessionManager = new SessionManager({ config, transcriptStore });
 const agentAdapter = new AgentAdapter({ profiles: config.agentProfiles });
 sessionManager.getOrCreate('main');

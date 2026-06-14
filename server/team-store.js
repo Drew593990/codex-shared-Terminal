@@ -192,7 +192,7 @@ class TeamStore {
   async assertAgentProfileAvailable(profileId) {
     const profiles = await this.listAgentProfiles();
     if (profiles.length === 0) {
-      return;
+      return null;
     }
     const profile = profiles.find((item) => item.profileId === profileId);
     if (!profile) {
@@ -201,11 +201,42 @@ class TeamStore {
     if (profile.enabled === false) {
       throw new Error(`Agent profile is disabled: ${profileId}`);
     }
+    return profile;
+  }
+
+  resolveAgentWorkspace(agentId, profile = {}) {
+    const workspace = this.staticContext.workspace || {};
+    const projectRoot = workspace.projectRoot || workspace.cwd || null;
+    const sharedPath = workspace.cwd || projectRoot;
+    const mode = profile.worktreeMode || 'shared';
+    if (mode === 'isolated') {
+      const worktreesDir = workspace.worktreesDir || path.join(projectRoot || this.rootDir, '.worktrees');
+      return {
+        mode,
+        path: path.join(worktreesDir, agentId),
+        branch: `shareterminal/${agentId}`,
+        status: 'planned'
+      };
+    }
+    if (mode === 'none') {
+      return {
+        mode,
+        path: null,
+        branch: null,
+        status: 'disabled'
+      };
+    }
+    return {
+      mode: 'shared',
+      path: sharedPath,
+      branch: null,
+      status: 'ready'
+    };
   }
 
   async addRosterAgent(input) {
     const profileId = safeId(input.profileId, 'profileId');
-    await this.assertAgentProfileAvailable(profileId);
+    const profile = await this.assertAgentProfileAvailable(profileId);
     const roster = await this.listRoster();
     const agentId = safeId(input.agentId || this.nextAgentId(profileId, roster), 'agentId');
     if (roster.some((agent) => agent.agentId === agentId && agent.status !== 'removed')) {
@@ -228,6 +259,7 @@ class TeamStore {
       conversationId: input.conversationId || `${agentId}-conversation`,
       status: input.status || 'idle',
       activeTaskId: input.activeTaskId || null,
+      workspace: this.resolveAgentWorkspace(agentId, profile || { worktreeMode: input.worktreeMode }),
       lastActivityAt: now,
       addedBy: input.addedBy || 'user',
       addedAt: now,

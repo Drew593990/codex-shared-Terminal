@@ -233,6 +233,8 @@ Initial roster fields:
 - `lastActivityAt`;
 - `addedBy`;
 - `removedAt`.
+- `workspace`: per-agent workspace plan, including `mode`, `path`, `branch`,
+  and `status`.
 
 Rules:
 
@@ -244,6 +246,9 @@ Rules:
 - the first agent in the roster is the default leader unless the user selects a
   different leader;
 - the leader can be reassigned, but the reassignment must be recorded in trace.
+- when a profile uses `worktreeMode = isolated`, new roster entries record a
+  planned workspace under `<projectRoot>\.worktrees\<agentId>` and a branch such
+  as `shareterminal/<agentId>`.
 
 ### Mention Router
 
@@ -490,6 +495,17 @@ Initial approach:
 - create worktrees under project-local `.worktrees`;
 - record branch/worktree path in task state;
 - expose cleanup commands only after status is terminal.
+
+Current implementation:
+
+- agent profiles expose `worktreeMode`;
+- roster agents record a workspace plan;
+- `shared` uses the server workspace cwd and is marked `ready`;
+- `isolated` uses `<projectRoot>\.worktrees\<agentId>` with branch
+  `shareterminal/<agentId>` and is marked `planned`;
+- `none` records no path and is marked `disabled`;
+- actual `git worktree add`, branch creation, status checks, and cleanup are
+  intentionally left for a later side-effectful slice.
 
 ## API Sketch
 

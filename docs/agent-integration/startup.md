@@ -167,6 +167,18 @@ The inbox response includes:
 - `terminal`: the visible session name, profile id, active session metadata, and
   recent transcript records for that agent's terminal pane.
 
+The roster `agent` record includes a `workspace` plan:
+
+- `workspace.mode = "shared"` means use the shared server cwd;
+- `workspace.mode = "isolated"` means the intended per-agent checkout is
+  `workspace.path`, with planned branch `workspace.branch`;
+- `workspace.mode = "none"` means the agent should not assume a filesystem
+  workspace.
+
+In the current slice, isolated workspaces are only planned metadata. Agents
+should not assume the directory already exists until a later worktree creation
+step marks it ready.
+
 The shared `context` also includes a runtime envelope:
 
 - `workspace.projectRoot` and `workspace.cwd`: the local project boundary and

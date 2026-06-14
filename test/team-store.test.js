@@ -508,6 +508,51 @@ test('TeamStore includes workspace and runtime metadata in shared context', asyn
   }
 });
 
+test('TeamStore records shared and isolated workspace plans for roster agents', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    const projectRoot = 'X:\\workspace\\project';
+    const store = new TeamStore(root, {
+      context: {
+        workspace: {
+          projectRoot,
+          cwd: projectRoot
+        }
+      },
+      profiles: {
+        echo: { label: 'Echo', mode: 'echo', worktreeMode: 'shared' },
+        researcher: { label: 'Researcher', mode: 'command', worktreeMode: 'isolated' },
+        observer: { label: 'Observer', mode: 'command', worktreeMode: 'none' }
+      }
+    });
+
+    const shared = await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const isolated = await store.addRosterAgent({ profileId: 'researcher', agentId: 'researcher1' });
+    const none = await store.addRosterAgent({ profileId: 'observer', agentId: 'observer1' });
+
+    assert.deepEqual(shared.workspace, {
+      mode: 'shared',
+      path: projectRoot,
+      branch: null,
+      status: 'ready'
+    });
+    assert.deepEqual(isolated.workspace, {
+      mode: 'isolated',
+      path: path.join(projectRoot, '.worktrees', 'researcher1'),
+      branch: 'shareterminal/researcher1',
+      status: 'planned'
+    });
+    assert.deepEqual(none.workspace, {
+      mode: 'none',
+      path: null,
+      branch: null,
+      status: 'disabled'
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TeamStore lets agents claim work, heartbeat it, and recover stale running tasks', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
   try {

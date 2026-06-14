@@ -3,7 +3,7 @@ const { mkdir, rm, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 
-const { loadConfig } = require('../server/config');
+const { loadConfig, teamStoreContext } = require('../server/config');
 
 test('loadConfig defines local CLI profiles for PowerShell, opencode, and claude', () => {
   const config = loadConfig({
@@ -48,6 +48,20 @@ test('loadConfig defines direct agent profiles and conversation storage', () => 
   );
   assert.deepEqual(config.agentProfiles.claude.args, ['-p']);
   assert.equal(config.agentProfiles.claude.promptMode, 'arg');
+});
+
+test('teamStoreContext uses configured cwd as the team workspace root', () => {
+  const config = loadConfig({
+    SHARETERMINAL_CWD: 'X:\\workspace\\target-project',
+    SHARETERMINAL_DATA_DIR: 'X:\\workspace\\target-project\\data'
+  });
+
+  assert.deepEqual(teamStoreContext(config), {
+    workspace: {
+      projectRoot: 'X:\\workspace\\target-project',
+      cwd: 'X:\\workspace\\target-project'
+    }
+  });
 });
 
 test('loadConfig can resolve direct CLIs from an explicit npm global directory', () => {

@@ -114,9 +114,20 @@ function loadConfig(env = process.env) {
   };
 }
 
+function teamStoreContext(config = {}) {
+  const cwd = config.cwd || config.rootDir || ROOT_DIR;
+  return {
+    workspace: {
+      projectRoot: cwd,
+      cwd
+    }
+  };
+}
+
 module.exports = {
   ROOT_DIR,
   createToken,
   readProjectAgentProfiles,
-  loadConfig
+  loadConfig,
+  teamStoreContext
 };
