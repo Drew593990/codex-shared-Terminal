@@ -442,7 +442,8 @@ Initial operations:
 
 Purpose: reconstruct task context from any id.
 
-Given a `taskId`, `conversationId`, `turnId`, or inbox item id, Trace should show:
+Given a `taskId`, `messageId`, `conversationId`, `turnId`, or inbox item id,
+Trace should show:
 
 - original request;
 - assigned agent;
@@ -452,6 +453,15 @@ Given a `taskId`, `conversationId`, `turnId`, or inbox item id, Trace should sho
 - status history;
 - result or error;
 - child tasks and parent task if applicable.
+
+Current implementation:
+
+- `GET /api/team/trace/:id` accepts a task id, message id, or inbox item id;
+- message and inbox identifiers resolve back to their owning task when they
+  carry a `taskId`;
+- trace responses include the resolved `task`, related `tasks`, timeline
+  `events`, and optional `message` or `inboxItem` fields when the lookup id was
+  one of those records.
 
 ### Provider Adapters
 
@@ -625,7 +635,7 @@ Important UI rule:
 
 - Create inbox item on terminal task completion.
 - Add ack and detail APIs.
-- Add trace endpoint for task and turn ids.
+- Add trace endpoint for task, message, inbox, and turn ids.
 - Add UI views for inbox and trace.
 - Trace leader planning, delegation, worker handoffs, review, and final
   delivery.

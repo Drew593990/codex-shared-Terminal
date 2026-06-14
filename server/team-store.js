@@ -990,7 +990,10 @@ class TeamStore {
 
   async trace(id) {
     const safeTraceId = safeId(id, 'trace id');
-    const task = await this.getTask(safeTraceId);
+    const inboxItem = (await this.listInbox()).find((item) => item.inboxId === safeTraceId) || null;
+    const message = (await this.listMessages()).find((item) => item.messageId === safeTraceId) || null;
+    const rootTaskId = inboxItem?.taskId || message?.taskId || safeTraceId;
+    const task = await this.getTask(rootTaskId);
     const allTasks = await this.listTasks();
     const childTasks = task
       ? (await Promise.all((task.childTaskIds || []).map((childTaskId) => this.getTask(childTaskId)))).filter(Boolean)
@@ -998,13 +1001,18 @@ class TeamStore {
     const retryTasks = task
       ? allTasks.filter((item) => item.retryOf === task.taskId)
       : [];
-    const taskIds = new Set([safeTraceId, ...childTasks.map((child) => child.taskId)]);
+    const taskIds = new Set([
+      rootTaskId,
+      ...childTasks.map((child) => child.taskId)
+    ]);
     const events = (await readJsonLines(this.file('events')))
       .filter((event) => taskIds.has(event.taskId) || event.messageId === safeTraceId)
       .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
     return {
       id: safeTraceId,
       task,
+      inboxItem,
+      message,
       tasks: [task, ...childTasks, ...retryTasks].filter(Boolean),
       events
     };

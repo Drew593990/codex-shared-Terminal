@@ -297,6 +297,17 @@ Completed and failed submissions create inbox items and trace events. If the
 task has a separate leader, ShareTerminal also sends a handoff message to the
 leader's team inbox.
 
+Trace a task from any visible team record:
+
+```powershell
+Invoke-RestMethod -Uri "$($share.baseUrl)/api/team/trace/<taskId-or-messageId-or-inboxId>"
+```
+
+The trace response resolves `messageId` and `inboxId` values back to their
+owning task when those records carry a `taskId`. It returns the resolved `task`,
+related `tasks`, timeline `events`, and the matched `message` or `inboxItem`
+when applicable.
+
 If an agent crashes or stops heartbeating, a coordinator can return expired work
 to the queue:
 

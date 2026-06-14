@@ -292,6 +292,56 @@ test('TeamStore writes completed task results into an ackable inbox', async () =
   }
 });
 
+test('TeamStore traces completed work from inbox and message identifiers', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    let messageIndex = 0;
+    const store = new TeamStore(root, {
+      now: createIncrementingClock('2026-06-14T04:20:00.000Z'),
+      taskIdFactory: () => 'task-trace-alias-1',
+      messageIdFactory: () => `message-trace-alias-${++messageIndex}`,
+      inboxIdFactory: () => 'inbox-trace-alias-1'
+    });
+    await store.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await store.createTask({
+      title: 'Trace aliases',
+      prompt: '@leader create traceable result',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+    const followup = await store.sendMessage({
+      from: 'codex',
+      to: 'echo1',
+      taskId: task.taskId,
+      body: '@echo1 continue the same task'
+    });
+
+    await store.startTask(task.taskId, { agentId: 'echo1', mode: 'direct' });
+    await store.completeTask(task.taskId, {
+      agentId: 'echo1',
+      result: 'traceable result',
+      turnId: 'turn-trace-alias-1'
+    });
+
+    const inboxTrace = await store.trace('inbox-trace-alias-1');
+    const messageTrace = await store.trace(followup.messageId);
+
+    assert.equal(inboxTrace.id, 'inbox-trace-alias-1');
+    assert.equal(inboxTrace.inboxItem.inboxId, 'inbox-trace-alias-1');
+    assert.equal(inboxTrace.task.taskId, task.taskId);
+    assert.deepEqual(inboxTrace.events.map((event) => event.type).slice(-2), [
+      'task.running',
+      'task.completed'
+    ]);
+    assert.equal(messageTrace.id, followup.messageId);
+    assert.equal(messageTrace.message.messageId, followup.messageId);
+    assert.equal(messageTrace.task.taskId, task.taskId);
+    assert.ok(messageTrace.events.some((event) => event.messageId === followup.messageId));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TeamStore cancels queued work and creates traceable retries', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
   try {
