@@ -144,6 +144,41 @@ class TeamStore {
     return roster.find((agent) => agent.role === 'leader') || roster[0] || null;
   }
 
+  async resolveMentionRoutes(mentions) {
+    const roster = await this.activeRoster();
+    const agentIds = new Set(roster.map((agent) => agent.agentId));
+    const reserved = new Set(['team', 'leader']);
+    const usedAgentIds = new Set();
+    const routes = [];
+    for (const mention of mentions || []) {
+      const token = String(mention).replace(/^@/, '');
+      if (!token || reserved.has(token) || agentIds.has(token)) {
+        continue;
+      }
+      const candidates = roster.filter((agent) => (
+        agent.profileId === token &&
+        agent.status !== 'removed' &&
+        !usedAgentIds.has(agent.agentId)
+      ));
+      if (candidates.length === 0) {
+        continue;
+      }
+      const idleCandidates = candidates.filter((agent) => agent.status === 'idle' && !agent.activeTaskId);
+      const selected = idleCandidates.find((agent) => agent.role !== 'leader') ||
+        idleCandidates[0] ||
+        candidates.find((agent) => agent.role !== 'leader') ||
+        candidates[0];
+      usedAgentIds.add(selected.agentId);
+      routes.push({
+        mention,
+        profileId: selected.profileId,
+        agentId: selected.agentId,
+        role: selected.role
+      });
+    }
+    return routes;
+  }
+
   nextAgentId(profileId, roster) {
     let index = 1;
     const existing = new Set(roster.map((agent) => agent.agentId));
@@ -253,6 +288,7 @@ class TeamStore {
   async createTask(input) {
     const leader = await this.leaderAgent();
     const mentions = readMentions(input.prompt);
+    const mentionRoutes = await this.resolveMentionRoutes(mentions);
     const now = this.now();
     const task = {
       taskId: input.taskId || this.taskIdFactory(),
@@ -266,6 +302,7 @@ class TeamStore {
       retryOf: input.retryOf || null,
       status: input.status || 'queued',
       mentions,
+      mentionRoutes,
       childTaskIds: [],
       handoffFrom: null,
       handoffTo: null,
@@ -285,7 +322,7 @@ class TeamStore {
       type: 'task.created',
       taskId: task.taskId,
       agentId: task.leaderAgentId,
-      data: { assignedTo: task.assignedTo, mentions: task.mentions }
+      data: { assignedTo: task.assignedTo, mentions: task.mentions, mentionRoutes: task.mentionRoutes }
     });
     const messageTarget = task.assignedTo === '@team' ? task.leaderAgentId : task.assignedTo;
     if (messageTarget) {
@@ -295,7 +332,8 @@ class TeamStore {
         to: messageTarget,
         taskId: task.taskId,
         body: task.prompt,
-        mentions
+        mentions,
+        mentionRoutes
       });
     }
     return task;
@@ -341,6 +379,7 @@ class TeamStore {
       taskId: input.taskId || null,
       body: String(input.body || ''),
       mentions: input.mentions || readMentions(input.body),
+      mentionRoutes: input.mentionRoutes || [],
       status: input.status || 'pending',
       createdAt: now,
       readAt: null,
@@ -486,6 +525,9 @@ class TeamStore {
       if (task.assignedTo === '@leader' && task.leaderAgentId === safeAgentId) {
         return true;
       }
+      if ((task.mentionRoutes || []).some((route) => route.agentId === safeAgentId)) {
+        return true;
+      }
       return (task.mentions || []).includes(`@${safeAgentId}`);
     });
     return {
@@ -510,6 +552,7 @@ class TeamStore {
     const canClaim = assigned === agentId ||
       assigned === `@${agentId}` ||
       (assigned === '@leader' && task.leaderAgentId === agentId) ||
+      (task.mentionRoutes || []).some((route) => route.agentId === agentId) ||
       (task.mentions || []).includes(`@${agentId}`);
     if (!canClaim) {
       throw new Error(`Task is not assigned to agent: ${agentId}`);

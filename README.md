@@ -45,6 +45,8 @@ sync.
 - Direct JSON conversation API for `echo`, `opencode`, and `claude`.
 - Phase 2 team APIs for agent inboxes, task claim, heartbeat, result/failure
   submission, retry, and stale recovery.
+- Mention routing for `@agentId`, `@leader`, `@team`, and existing
+  `@profileId` roster instances.
 - Server-side system notices for direct-agent `running` and `completed` states.
 - Persistent JSONL logs under the project-local `data` directory.
 - Project-local cache/temp layout for machines where global temp/cache writes

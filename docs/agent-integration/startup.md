@@ -411,3 +411,15 @@ Runtime files stay under the project root:
 7. For team participation, poll `/api/team/agents/{agentId}/inbox`, claim a
    queued task, heartbeat while working, submit completion or failure, and let
    stale recovery return expired work to the queue.
+
+Team prompts can address either a concrete instance or an existing profile:
+
+- `@echo2`, `@opencode1`, or `@claude-code1` target that exact roster instance;
+- `@leader` targets the current leader;
+- `@team` sends the request to the leader and lets dispatch split mentioned
+  worker tasks;
+- `@echo`, `@opencode`, or another profile id is preserved in `mentions` and
+  resolved into `mentionRoutes` when an idle matching roster instance exists.
+
+Profile mentions do not create a new agent. Add the agent to the roster first,
+then dispatch the task.

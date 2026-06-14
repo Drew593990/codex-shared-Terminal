@@ -260,13 +260,16 @@ Mention examples:
 Routing rules:
 
 - `@agentId` targets one roster instance;
-- `@profileId` may target the first matching idle instance or open a selection
-  prompt if multiple matches exist;
+- `@profileId` currently resolves to an existing idle roster instance with that
+  profile, preferring a non-leader worker when available;
 - `@team` targets the whole roster;
 - `@leader` targets the current leader;
 - mentions should be stored as structured messages, not only injected into the
   terminal as text;
-- mention parsing must preserve the original user text in the trace.
+- mention parsing must preserve the original user text in the trace;
+- profile mention routing is stored as `mentionRoutes`, so `@opencode` can
+  remain visible in the prompt while dispatch, inbox, and claim use a concrete
+  agent id such as `opencode2`.
 
 ### Leader Agent
 

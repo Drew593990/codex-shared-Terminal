@@ -135,6 +135,46 @@ test('TeamStore routes @team tasks to the leader and records mentions', async ()
   }
 });
 
+test('TeamStore resolves profile mentions to an idle concrete agent', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    const store = new TeamStore(root, {
+      now: createClock(),
+      profiles: {
+        opencode: { label: 'opencode', enabled: true },
+        claude: { label: 'Claude', enabled: true }
+      },
+      taskIdFactory: () => 'task-profile-mention',
+      messageIdFactory: (() => {
+        let index = 0;
+        return () => `message-profile-${++index}`;
+      })()
+    });
+    await store.addRosterAgent({ profileId: 'opencode' });
+    await store.addRosterAgent({ profileId: 'opencode' });
+    await store.addRosterAgent({ profileId: 'claude', agentId: 'claude1', role: 'reviewer' });
+
+    const task = await store.createTask({
+      title: 'Profile mention route',
+      prompt: '@team ask @opencode to inspect tests and @claude to review.',
+      createdBy: 'codex',
+      assignedTo: '@team'
+    });
+    const inbox = await store.agentInbox('opencode2');
+    const claimed = await store.claimTask(task.taskId, { agentId: 'opencode2' });
+
+    assert.deepEqual(task.mentions, ['@team', '@opencode', '@claude']);
+    assert.deepEqual(task.mentionRoutes.map((route) => [route.mention, route.agentId, route.profileId]), [
+      ['@opencode', 'opencode2', 'opencode'],
+      ['@claude', 'claude1', 'claude']
+    ]);
+    assert.deepEqual(inbox.tasks.map((item) => item.taskId), [task.taskId]);
+    assert.equal(claimed.claimedBy, 'opencode2');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TeamStore supports direct mention messages and leader reassignment', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
   try {

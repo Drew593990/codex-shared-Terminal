@@ -1247,3 +1247,59 @@ test('team dispatch splits mentioned workers and returns leader final delivery',
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('team dispatch splits profile mentions to concrete idle workers', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-profile-team-${++taskIndex}`,
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-profile-team-${++index}`;
+    })()
+  });
+  const manager = createFakeManager();
+  const agentAdapter = createFakeAgentAdapter();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2' });
+    const task = await teamStore.createTask({
+      title: 'Profile team split',
+      prompt: '@team ask @echo to inspect the code, then produce one checked delivery',
+      createdBy: 'codex',
+      assignedTo: '@team'
+    });
+
+    const dispatchResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+    const dispatchBody = await dispatchResponse.json();
+    const storedTask = await teamStore.getTask(task.taskId);
+
+    assert.equal(dispatchResponse.status, 200);
+    assert.deepEqual(storedTask.mentionRoutes.map((route) => [route.mention, route.agentId]), [
+      ['@echo', 'echo2']
+    ]);
+    assert.equal(dispatchBody.task.status, 'completed');
+    assert.match(dispatchBody.task.result, /echo2/);
+    assert.deepEqual(agentAdapter.calls.map((call) => call.input.agent.agentId), ['echo2', 'echo1']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});

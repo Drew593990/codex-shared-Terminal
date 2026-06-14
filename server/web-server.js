@@ -127,6 +127,11 @@ function mentionedRosterAgents(task, roster) {
   const mentionIds = new Set((task.mentions || [])
     .map((mention) => mention.replace(/^@/, ''))
     .filter((mention) => mention && !['team', 'leader'].includes(mention)));
+  for (const route of task.mentionRoutes || []) {
+    if (route.agentId) {
+      mentionIds.add(route.agentId);
+    }
+  }
   return roster.filter((agent) => mentionIds.has(agent.agentId) && agent.status !== 'removed');
 }
 
