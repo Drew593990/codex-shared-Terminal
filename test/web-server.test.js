@@ -819,7 +819,13 @@ test('team agent inbox API returns messages, assigned tasks, and context', async
   const { server } = createWebServer({
     sessionManager: manager,
     teamStore,
-    config: { token: 'secret', publicDir: process.cwd() }
+    config: {
+      token: 'secret',
+      publicDir: process.cwd(),
+      rootDir: 'X:\\shareterminal',
+      cwd: 'X:\\workspace\\project',
+      shell: 'powershell.exe'
+    }
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -848,6 +854,9 @@ test('team agent inbox API returns messages, assigned tasks, and context', async
     assert.equal(inboxBody.inbox.items[0].summary, 'Please provide the missing input.');
     assert.equal(inboxBody.inbox.messages[0].to, 'echo2');
     assert.equal(inboxBody.inbox.context.leader.agentId, 'echo1');
+    assert.equal(inboxBody.inbox.context.workspace.cwd, 'X:\\workspace\\project');
+    assert.equal(inboxBody.inbox.context.runtime.shell, 'powershell.exe');
+    assert.deepEqual(inboxBody.inbox.context.terminalSessions.map((session) => session.name), ['main', 'echo2']);
     assert.equal(inboxBody.inbox.terminal.session, 'echo2');
     assert.equal(inboxBody.inbox.terminal.profileId, 'echo');
     assert.deepEqual(manager.createdAgentSessions, [{ name: 'echo2', profileName: 'echo' }]);

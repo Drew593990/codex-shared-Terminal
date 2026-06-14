@@ -431,6 +431,33 @@ test('TeamStore exposes an agent inbox with assigned tasks, messages, and contex
   }
 });
 
+test('TeamStore includes workspace and runtime metadata in shared context', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
+  try {
+    const store = new TeamStore(root, {
+      context: {
+        workspace: {
+          projectRoot: 'X:\\workspace\\project',
+          cwd: 'X:\\workspace\\project'
+        },
+        runtime: {
+          platform: 'win32',
+          shell: 'powershell.exe'
+        }
+      }
+    });
+
+    const context = await store.getContext();
+
+    assert.equal(context.workspace.projectRoot, 'X:\\workspace\\project');
+    assert.equal(context.workspace.cwd, 'X:\\workspace\\project');
+    assert.equal(context.runtime.platform, 'win32');
+    assert.equal(context.runtime.shell, 'powershell.exe');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TeamStore lets agents claim work, heartbeat it, and recover stale running tasks', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-'));
   try {

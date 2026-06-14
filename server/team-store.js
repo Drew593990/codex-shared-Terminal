@@ -80,6 +80,7 @@ class TeamStore {
     this.messageIdFactory = options.messageIdFactory || (() => defaultId('message'));
     this.inboxIdFactory = options.inboxIdFactory || (() => defaultId('inbox'));
     this.profiles = options.profiles || {};
+    this.staticContext = options.context || {};
   }
 
   file(name) {
@@ -978,6 +979,7 @@ class TeamStore {
 
   async getContext() {
     return {
+      ...this.staticContext,
       roster: await this.activeRoster(),
       leader: await this.leaderAgent(),
       activeTasks: (await this.listTasks()).filter((task) => !['completed', 'failed', 'cancelled'].includes(task.status)),

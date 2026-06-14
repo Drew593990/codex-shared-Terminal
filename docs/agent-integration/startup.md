@@ -167,6 +167,16 @@ The inbox response includes:
 - `terminal`: the visible session name, profile id, active session metadata, and
   recent transcript records for that agent's terminal pane.
 
+The shared `context` also includes a runtime envelope:
+
+- `workspace.projectRoot` and `workspace.cwd`: the local project boundary and
+  working directory known to the ShareTerminal server;
+- `runtime.platform`, `runtime.shell`, and `runtime.pid`: local process summary
+  for environment-aware agents;
+- `terminalSessions`: currently visible or initialized terminal sessions,
+  including session name, command, args, cwd, client count, and created time
+  when available.
+
 Claim a queued task before working on it:
 
 ```powershell

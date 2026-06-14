@@ -47,6 +47,8 @@ sync.
   submission, retry, and stale recovery.
 - Mention routing for `@agentId`, `@leader`, `@team`, and existing
   `@profileId` roster instances.
+- Shared context envelope for workspace path, runtime shell/platform, and
+  visible terminal session summaries.
 - Server-side system notices for direct-agent `running` and `completed` states.
 - Persistent JSONL logs under the project-local `data` directory.
 - Project-local cache/temp layout for machines where global temp/cache writes

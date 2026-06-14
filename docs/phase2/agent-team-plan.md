@@ -359,6 +359,14 @@ Design rule:
 - agents should use structured context first, and raw transcripts only when
   they need exact terminal evidence.
 
+Current implementation:
+
+- `context.workspace` exposes the server project root and cwd;
+- `context.runtime` exposes platform, shell, and process id;
+- `context.terminalSessions` exposes initialized visible terminal sessions and
+  their command/cwd/client metadata;
+- git branch/status summary remains a later extension.
+
 ### Agent Messages
 
 Purpose: let agents communicate without abusing terminal input as the only

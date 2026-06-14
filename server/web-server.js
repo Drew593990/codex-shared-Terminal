@@ -108,6 +108,46 @@ async function publishTeamTaskNotice(sessionManager, sessionName, task) {
   await sessionManager.publishSystem(sessionName || 'main', formatTeamTaskNotice(task));
 }
 
+function runtimeContext(config = {}, sessionManager) {
+  const sessions = typeof sessionManager.listSessions === 'function' ? sessionManager.listSessions() : [];
+  return {
+    workspace: {
+      projectRoot: config.rootDir || config.cwd || process.cwd(),
+      cwd: config.cwd || process.cwd()
+    },
+    runtime: {
+      platform: process.platform,
+      shell: config.shell || '',
+      pid: process.pid
+    },
+    terminalSessions: sessions.map((session) => ({
+      name: session.name,
+      label: session.label || session.name,
+      command: session.command || session.shell || '',
+      args: session.args || [],
+      cwd: session.cwd || '',
+      clients: session.clients || 0,
+      createdAt: session.createdAt || null
+    }))
+  };
+}
+
+function mergeContext(baseContext = {}, config = {}, sessionManager) {
+  const runtime = runtimeContext(config, sessionManager);
+  return {
+    ...baseContext,
+    workspace: {
+      ...runtime.workspace,
+      ...(baseContext.workspace || {})
+    },
+    runtime: {
+      ...runtime.runtime,
+      ...(baseContext.runtime || {})
+    },
+    terminalSessions: runtime.terminalSessions
+  };
+}
+
 async function resolveDispatchAgent(teamStore, task) {
   const roster = await teamStore.listRoster();
   let agentId = task.assignedTo;
@@ -286,6 +326,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
       response.json({
         inbox: {
           ...inbox,
+          context: mergeContext(inbox.context, config, sessionManager),
           terminal: {
             session: sessionName,
             profileId: inbox.agent.profileId,
@@ -538,7 +579,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
   app.get('/api/team/context', async (request, response, next) => {
     try {
       requireTeamStore(teamStore);
-      response.json({ context: await teamStore.getContext() });
+      response.json({ context: mergeContext(await teamStore.getContext(), config, sessionManager) });
     } catch (error) {
       next(error);
     }
