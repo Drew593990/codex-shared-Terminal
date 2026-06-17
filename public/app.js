@@ -34,10 +34,26 @@
   let mainMentionMode = false;
   let mainMentionCommand = '';
   const terminalPanes = new Map();
+  const safeLocalStorage = {
+    getItem(key) {
+      try {
+        return window.localStorage?.getItem(key) || '';
+      } catch {
+        return '';
+      }
+    },
+    setItem(key, value) {
+      try {
+        window.localStorage?.setItem(key, value);
+      } catch {
+        // Some embedded browser contexts disable localStorage.
+      }
+    }
+  };
 
   sessionEl.textContent = session;
-  conversationIdInput.value = window.localStorage.getItem('shareterminal.conversationId') || 'direct-main';
-  apiToken.value = window.localStorage.getItem('shareterminal.token') || '';
+  conversationIdInput.value = safeLocalStorage.getItem('shareterminal.conversationId') || 'direct-main';
+  apiToken.value = safeLocalStorage.getItem('shareterminal.token') || '';
 
   function createTerminal() {
     return new Terminal({
@@ -215,7 +231,7 @@
     shellEl.classList.toggle('conversation-collapsed', !open);
     toggleConversationButton.setAttribute('aria-expanded', String(open));
     toggleConversationButton.textContent = open ? 'Hide Direct' : 'Direct';
-    window.localStorage.setItem('shareterminal.conversationOpen', open ? 'true' : 'false');
+    safeLocalStorage.setItem('shareterminal.conversationOpen', open ? 'true' : 'false');
     refitTerminal();
     terminal.focus();
   }
@@ -252,7 +268,7 @@
       option.textContent = agent.label;
       agentSelect.appendChild(option);
     });
-    agentSelect.value = window.localStorage.getItem('shareterminal.agent') || body.agents[0]?.name || 'echo';
+    agentSelect.value = safeLocalStorage.getItem('shareterminal.agent') || body.agents[0]?.name || 'echo';
   }
 
   function setAgentStatus(value, state) {
@@ -283,7 +299,7 @@
     if (!command) {
       return;
     }
-    window.localStorage.setItem('shareterminal.token', apiToken.value);
+    safeLocalStorage.setItem('shareterminal.token', apiToken.value);
     terminal.write(`\r\n[shareterminal] dispatching ${command}\r\n`);
     try {
       const response = await fetch('/api/team/commands/mention', {
@@ -825,7 +841,7 @@
     }
     sendTeamTaskButton.disabled = true;
     setTeamStatus('dispatching', 'running');
-    window.localStorage.setItem('shareterminal.token', apiToken.value);
+    safeLocalStorage.setItem('shareterminal.token', apiToken.value);
     try {
       const response = await fetch('/api/team/tasks', {
         method: 'POST',
@@ -1043,9 +1059,9 @@
     }
 
     conversationIdInput.value = conversationId;
-    window.localStorage.setItem('shareterminal.agent', agent);
-    window.localStorage.setItem('shareterminal.conversationId', conversationId);
-    window.localStorage.setItem('shareterminal.token', token);
+    safeLocalStorage.setItem('shareterminal.agent', agent);
+    safeLocalStorage.setItem('shareterminal.conversationId', conversationId);
+    safeLocalStorage.setItem('shareterminal.token', token);
 
     sendAgentButton.disabled = true;
     setAgentStatus('running', 'running');
@@ -1108,12 +1124,12 @@
     Promise.all([loadTeamProfiles(), loadTeamState()]).catch((error) => setTeamStatus(error.message, 'error'));
   });
   conversationIdInput.addEventListener('change', () => {
-    window.localStorage.setItem('shareterminal.conversationId', conversationIdInput.value.trim());
+    safeLocalStorage.setItem('shareterminal.conversationId', conversationIdInput.value.trim());
     lastConversationSignature = '';
     loadConversationTurns().catch((error) => setAgentStatus(error.message, 'error'));
   });
   agentSelect.addEventListener('change', () => {
-    window.localStorage.setItem('shareterminal.agent', agentSelect.value);
+    safeLocalStorage.setItem('shareterminal.agent', agentSelect.value);
   });
   agentPrompt.addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -1132,7 +1148,7 @@
     window.location.search = `?session=${encodeURIComponent(session)}`;
   });
 
-  setConversationOpen(window.localStorage.getItem('shareterminal.conversationOpen') === 'true');
+  setConversationOpen(safeLocalStorage.getItem('shareterminal.conversationOpen') === 'true');
   window.setInterval(() => {
     if (document.activeElement === conversationIdInput || document.activeElement === agentPrompt) {
       return;

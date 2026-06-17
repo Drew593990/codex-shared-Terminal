@@ -36,6 +36,7 @@
             <div class="conversation-toolbar">
               <select id="team-profile-select" class="agent-select" aria-label="Agent CLI profile"></select>
               <input id="team-agent-id" class="conversation-id" aria-label="Agent ID" autocomplete="off" spellcheck="false" placeholder="opencode1">
+              <input id="api-token" class="api-token" aria-label="API token" type="password" autocomplete="off" placeholder="API token">
               <button id="add-team-agent" type="button">Add Agent</button>
               <button id="refresh-team" type="button">Refresh</button>
             </div>
@@ -59,7 +60,6 @@
           </div>
           <textarea id="agent-prompt" class="agent-prompt" aria-label="Prompt" rows="4"></textarea>
           <div class="conversation-toolbar">
-            <input id="api-token" class="api-token" aria-label="API token" type="password" autocomplete="off">
             <button id="send-agent" type="button">Send</button>
           </div>
           <div id="agent-status" class="agent-status" aria-live="polite"></div>

@@ -225,3 +225,34 @@ The revised phase 2 direction is not complete until these are true:
 - stale smoke/test agents do not clutter the default workspace;
 - backend task, message, inbox, and trace state remain durable and inspectable.
 
+## Implementation Status
+
+Implemented on the `phase2` branch:
+
+- the browser layout now uses one `main` xterm region followed by an
+  `Agent Workspace` section;
+- active roster agents render as structured `agent-card` child interfaces
+  instead of peer PowerShell terminal panes;
+- each card shows agent id, profile, role, status, prompt, structured reply,
+  task result, remove/trace actions, and a collapsed raw CLI output section;
+- the Agent Workspace header exposes profile selection, optional agent id,
+  API token, add, and refresh controls;
+- `POST /api/team/commands/mention` accepts main-terminal commands such as
+  `@echo inspect docs`, creates or reuses an agent, creates a task, dispatches
+  it, and returns the updated agent/task;
+- the browser intercepts main-terminal lines that begin with `@` and routes
+  them to the mention command API instead of sending them to PowerShell;
+- normal non-mention terminal input still goes to the underlying PTY;
+- `scripts/smoke-main-terminal-agent-cards.ps1` verifies the mention command
+  chain, roster state, task completion, trace, and inbox;
+- browser verification confirmed that a typed main-terminal `@echo ...`
+  command updates the `echo1` card and does not create peer terminal panes.
+
+Remaining work for the full long-term product:
+
+- add richer card-level stop/cancel/retry controls for running real CLIs;
+- add a first-class leader review UI for multi-agent `@team` workflows;
+- validate the same card workflow with real `opencode` and Claude Code turns
+  when token/budget conditions make that appropriate;
+- add a dedicated persisted UI setting for whether removed cards stay visible
+  as collapsed audit records.

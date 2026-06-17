@@ -30,6 +30,7 @@ test('browser UI exposes team task and trace surfaces', async () => {
   assert.match(app, /\/api\/team\/commands\/mention/);
   assert.match(app, /mainInputBuffer/);
   assert.match(app, /mainMentionCommand/);
+  assert.match(app, /safeLocalStorage/);
   assert.match(app, /team-task-result/);
   assert.match(app, /\/api\/team\/tasks\/\$\{encodeURIComponent\(task\.taskId\)\}\/dispatch/);
   assert.match(app, /\/api\/team\/tasks\/\$\{encodeURIComponent\(task\.taskId\)\}\/cancel/);
