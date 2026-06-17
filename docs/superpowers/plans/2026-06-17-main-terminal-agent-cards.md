@@ -322,7 +322,7 @@ Expected: PASS.
 Start an isolated local server on a non-default port and run:
 
 ```powershell
-$env:SHARETERMINAL_TOKEN='main-card-smoke-token'
+$env:SHARETERMINAL_TOKEN='<local-smoke-token>'
 npm run smoke:main-terminal-agent-cards -- --BaseUrl http://127.0.0.1:<port>
 ```
 
@@ -346,4 +346,3 @@ git add package.json scripts/smoke-main-terminal-agent-cards.ps1 docs/phase2/mai
 git commit -m "test: add main terminal agent card smoke"
 git push origin phase2
 ```
-
