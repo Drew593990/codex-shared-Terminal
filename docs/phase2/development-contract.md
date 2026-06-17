@@ -138,8 +138,9 @@ or backend behavior changes.
 Required test coverage for each slice:
 
 - UI contract test: one main terminal, no default peer terminal grid, cards
-  below the main terminal, structured sections present, raw output collapsed by
-  default;
+  below the main terminal, structured sections present, manual team/agent
+  message controls present, review/audit surfaces collapsed by default, raw
+  output collapsed by default;
 - routing test: `@profile`, `@agentId`, `@leader`, and `@team` resolve to the
   expected concrete card/task ownership;
 - lifecycle test: run, stop/cancel, retry, resume, remove, and trace leave
@@ -180,9 +181,13 @@ The next iteration is not done until all of these are true:
   panes;
 - adding and removing cards works from the UI;
 - each card can select or display its CLI profile;
+- the user can manually message the team and manually message each active
+  agent card without opening a separate direct conversation panel;
 - `@opencode` and `@claude` create or reuse cards and show structured replies;
 - `@team` shows leader and worker activity in cards and team flow;
 - raw output is available but collapsed by default;
+- roster, task list, inbox, trace, and message history are available for
+  review but are not flat first-screen panels;
 - removed cards are hidden by default and recoverable as audit records;
 - task ownership is shown on the correct card even when the same leader owns a
   team run;

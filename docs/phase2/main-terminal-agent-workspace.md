@@ -45,7 +45,7 @@ Agent workspace
   agent card: claude1
     structured prompt/reply/task state/result
     expandable raw CLI output
-  task board / inbox / trace, tied to the cards above
+  Review [collapsed]: roster / task board / inbox / trace / messages
 ```
 
 ## Required Interaction Model
@@ -92,6 +92,7 @@ should include:
 - current prompt or assigned task;
 - structured agent reply/result;
 - latest handoff or message;
+- a manual user message box addressed to that exact card;
 - action controls: run, stop, remove, retry, collapse, expand raw output;
 - optional raw CLI output region.
 
@@ -110,6 +111,24 @@ Raw CLI output [collapsed]
 
 Raw CLI output is still important, but it should be expandable evidence, not the
 primary visual structure.
+
+The default workspace must not make every backend state surface compete for
+attention. Roster, task list, inbox, trace, and message history belong in a
+collapsed `Review` area. The primary surface is the team composer plus the
+agent cards.
+
+### Manual User Intervention
+
+The user must be able to intervene without leaving the shared workspace:
+
+- a `Team Message` composer posts a durable message to the current leader with
+  an `@team` mention;
+- a `Team Task` composer creates dispatchable work for the team;
+- every active agent card has its own message textarea and send action;
+- manual messages are stored through the team message API so they survive
+  refresh and can appear in agent inbox/context state;
+- sending a message is not the same as dispatching a task unless the user uses
+  the task composer or the main terminal `@agent` command path.
 
 ### Add / Remove / Select Agent CLI
 

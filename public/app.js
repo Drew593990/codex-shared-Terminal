@@ -21,7 +21,9 @@
   const addTeamAgentButton = document.getElementById('add-team-agent');
   const agentCards = document.getElementById('agent-cards');
   const teamRoster = document.getElementById('team-roster');
+  const teamMessage = document.getElementById('team-message');
   const teamPrompt = document.getElementById('team-prompt');
+  const sendTeamMessageButton = document.getElementById('send-team-message');
   const sendTeamTaskButton = document.getElementById('send-team-task');
   const refreshTeamButton = document.getElementById('refresh-team');
   const teamTasks = document.getElementById('team-tasks');
@@ -291,6 +293,25 @@
     };
   }
 
+  function extractMentions(text, extra = []) {
+    const mentions = String(text || '').match(/@[a-zA-Z0-9_.-]+/g) || [];
+    return [...new Set([...extra, ...mentions].filter(Boolean))];
+  }
+
+  async function postTeamMessage(payload) {
+    safeLocalStorage.setItem('shareterminal.token', apiToken.value);
+    const response = await fetch('/api/team/messages', {
+      method: 'POST',
+      headers: teamHeaders(),
+      body: JSON.stringify(payload)
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error || `message ${response.status}`);
+    }
+    return body.message;
+  }
+
   function resetMainMentionInput() {
     mainInputBuffer = '';
     mainMentionMode = false;
@@ -491,6 +512,31 @@
     await loadTeamState();
   }
 
+  async function sendAgentMessage(agent, input, button) {
+    const body = input.value.trim();
+    if (!body) {
+      setTeamStatus(`empty message for ${agent.agentId}`, 'error');
+      return;
+    }
+    button.disabled = true;
+    setTeamStatus(`messaging ${agent.agentId}`, 'running');
+    try {
+      const message = await postTeamMessage({
+        from: 'user',
+        to: agent.agentId,
+        body,
+        mentions: extractMentions(body, [`@${agent.agentId}`])
+      });
+      input.value = '';
+      setTeamStatus(`sent ${message.messageId}`, 'ok');
+      await loadTeamState();
+    } catch (error) {
+      setTeamStatus(error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function cardActionContext(agent, task) {
     return {
       agentId: agent.agentId,
@@ -589,6 +635,34 @@
     result.className = 'agent-card-result';
     result.textContent = task ? `${task.taskId} | ${task.status}` : 'No task linked.';
 
+    const messageLine = document.createElement('div');
+    messageLine.className = 'agent-card-message-history';
+    messageLine.textContent = message
+      ? `${message.from || 'user'} -> ${message.to || agent.agentId}: ${message.body || ''}`
+      : 'No manual messages.';
+
+    const messageBox = document.createElement('div');
+    messageBox.className = 'agent-card-message';
+    const messageInput = document.createElement('textarea');
+    messageInput.className = 'agent-card-message-input';
+    messageInput.setAttribute('data-agent-message', agent.agentId);
+    messageInput.setAttribute('aria-label', `Message ${agent.agentId}`);
+    messageInput.rows = 2;
+    const messageSend = document.createElement('button');
+    messageSend.type = 'button';
+    messageSend.textContent = 'Message';
+    messageSend.setAttribute('data-agent-send', agent.agentId);
+    messageSend.addEventListener('click', () => {
+      sendAgentMessage(agent, messageInput, messageSend).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+    messageInput.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        sendAgentMessage(agent, messageInput, messageSend).catch((error) => setTeamStatus(error.message, 'error'));
+      }
+    });
+    messageBox.append(messageInput, messageSend);
+
     const actions = document.createElement('div');
     actions.className = 'agent-card-actions';
 
@@ -620,7 +694,7 @@
 
     header.append(identity, profile, status);
     actions.append(remove);
-    card.append(header, prompt, reply, result, actions, taskActions, raw);
+    card.append(header, prompt, reply, result, messageLine, messageBox, actions, taskActions, raw);
     return card;
   }
 
@@ -1075,6 +1149,31 @@
     }
   }
 
+  async function sendTeamMessage() {
+    const body = teamMessage.value.trim();
+    if (!body) {
+      setTeamStatus('empty team message', 'error');
+      return;
+    }
+    sendTeamMessageButton.disabled = true;
+    setTeamStatus('messaging team', 'running');
+    try {
+      const message = await postTeamMessage({
+        from: 'user',
+        to: '@leader',
+        body,
+        mentions: extractMentions(body, ['@team'])
+      });
+      teamMessage.value = '';
+      setTeamStatus(`sent ${message.messageId}`, 'ok');
+      await loadTeamState();
+    } catch (error) {
+      setTeamStatus(error.message, 'error');
+    } finally {
+      sendTeamMessageButton.disabled = false;
+    }
+  }
+
   async function sendTeamTask() {
     const prompt = teamPrompt.value.trim();
     if (!prompt) {
@@ -1362,14 +1461,15 @@
   });
   sendAgentButton.addEventListener('click', sendAgentPrompt);
   addTeamAgentButton.addEventListener('click', addTeamAgent);
+  sendTeamMessageButton.addEventListener('click', sendTeamMessage);
   sendTeamTaskButton.addEventListener('click', sendTeamTask);
-      refreshTeamButton.addEventListener('click', () => {
-        Promise.all([loadTeamProfiles(), loadTeamState()]).catch((error) => setTeamStatus(error.message, 'error'));
-      });
-      showRemovedAgents.addEventListener('change', () => {
-        safeLocalStorage.setItem('shareterminal.showRemovedAgents', showRemovedAgents.checked ? 'true' : 'false');
-        loadTeamState().catch((error) => setTeamStatus(error.message, 'error'));
-      });
+  refreshTeamButton.addEventListener('click', () => {
+    Promise.all([loadTeamProfiles(), loadTeamState()]).catch((error) => setTeamStatus(error.message, 'error'));
+  });
+  showRemovedAgents.addEventListener('change', () => {
+    safeLocalStorage.setItem('shareterminal.showRemovedAgents', showRemovedAgents.checked ? 'true' : 'false');
+    loadTeamState().catch((error) => setTeamStatus(error.message, 'error'));
+  });
   conversationIdInput.addEventListener('change', () => {
     safeLocalStorage.setItem('shareterminal.conversationId', conversationIdInput.value.trim());
     lastConversationSignature = '';
@@ -1382,6 +1482,12 @@
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
       sendAgentPrompt();
+    }
+  });
+  teamMessage.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      sendTeamMessage();
     }
   });
   teamPrompt.addEventListener('keydown', (event) => {
@@ -1403,7 +1509,12 @@
     loadConversationTurns({ silent: true }).catch(() => {});
   }, 3000);
   window.setInterval(() => {
-    if (document.activeElement === teamPrompt || document.activeElement === teamAgentId) {
+    if (
+      document.activeElement === teamPrompt ||
+      document.activeElement === teamMessage ||
+      document.activeElement === teamAgentId ||
+      document.activeElement?.dataset?.agentMessage
+    ) {
       return;
     }
     loadTeamState({ silent: true }).catch(() => {});

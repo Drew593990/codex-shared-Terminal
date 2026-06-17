@@ -45,19 +45,34 @@
               <button id="refresh-team" type="button">Refresh</button>
             </div>
           </div>
-          <section id="agent-cards" class="agent-cards" aria-label="Agent child interfaces"></section>
-          <section class="team-command-panel" aria-label="Team command panel">
-            <textarea id="team-prompt" class="agent-prompt team-prompt" aria-label="Team prompt" rows="3">@team </textarea>
-            <div class="conversation-toolbar">
-              <button id="send-team-task" type="button">Dispatch</button>
+          <section class="team-command-panel" aria-label="Team composer">
+            <div class="team-composer-grid">
+              <div class="team-composer-block team-message-composer">
+                <label class="composer-label" for="team-message">Team Message</label>
+                <textarea id="team-message" class="agent-prompt team-message-input" aria-label="Team message" rows="2"></textarea>
+                <div class="conversation-toolbar">
+                  <button id="send-team-message" type="button">Message Team</button>
+                </div>
+              </div>
+              <div class="team-composer-block">
+                <label class="composer-label" for="team-prompt">Team Task</label>
+                <textarea id="team-prompt" class="agent-prompt team-prompt" aria-label="Team prompt" rows="2">@team </textarea>
+                <div class="conversation-toolbar">
+                  <button id="send-team-task" type="button">Dispatch Task</button>
+                </div>
+              </div>
             </div>
           </section>
-          <section id="team-roster" class="team-roster" aria-label="Current task agents"></section>
-          <section id="team-flow" class="team-flow" aria-label="Team flow"></section>
-          <section id="team-tasks" class="team-tasks" aria-label="Team tasks"></section>
-          <section id="team-inbox" class="team-inbox" aria-label="Team inbox"></section>
-          <section id="team-trace" class="team-trace" aria-label="Team trace"></section>
-          <section id="team-messages" class="team-messages" aria-label="Team messages"></section>
+          <section id="agent-cards" class="agent-cards" aria-label="Agent child interfaces"></section>
+          <details class="team-review" aria-label="Review">
+            <summary>Review</summary>
+            <section id="team-roster" class="team-roster" aria-label="Current task agents"></section>
+            <section id="team-flow" class="team-flow" aria-label="Team flow"></section>
+            <section id="team-tasks" class="team-tasks" aria-label="Team tasks"></section>
+            <section id="team-inbox" class="team-inbox" aria-label="Team inbox"></section>
+            <section id="team-trace" class="team-trace" aria-label="Team trace"></section>
+            <section id="team-messages" class="team-messages" aria-label="Team messages"></section>
+          </details>
           <section id="conversation-panel" class="conversation direct-conversation" aria-label="Direct conversation">
           <div class="conversation-toolbar">
             <select id="agent-select" class="agent-select" aria-label="Agent"></select>

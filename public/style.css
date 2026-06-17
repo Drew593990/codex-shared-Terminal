@@ -203,8 +203,8 @@ button:hover {
 
 .agent-workspace {
   display: grid;
-  grid-template-columns: minmax(280px, 1.1fr) minmax(220px, 0.8fr) minmax(220px, 0.8fr);
-  grid-template-rows: auto minmax(130px, auto) minmax(130px, 1fr) minmax(96px, 0.7fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(180px, auto) auto;
   gap: 8px;
   min-width: 0;
   min-height: 0;
@@ -298,6 +298,7 @@ button:hover {
 .agent-card-prompt,
 .agent-card-reply,
 .agent-card-result,
+.agent-card-message-history,
 .agent-card-raw-body {
   min-width: 0;
   color: #aeb7c2;
@@ -314,6 +315,35 @@ button:hover {
 
 .agent-card-result {
   color: #f4bf75;
+}
+
+.agent-card-message-history {
+  color: #d8dee9;
+}
+
+.agent-card-message {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-card-message-input {
+  min-width: 0;
+  min-height: 48px;
+  padding: 7px;
+  resize: vertical;
+  border: 1px solid #3a424d;
+  border-radius: 6px;
+  background: #20242a;
+  color: #e6e8eb;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.agent-card-message button {
+  align-self: start;
 }
 
 .agent-card-raw {
@@ -341,6 +371,32 @@ button:hover {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.team-composer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.team-composer-block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #2c343d;
+  border-radius: 6px;
+  background: #101214;
+}
+
+.team-message-composer {
+  border-color: #33404d;
+}
+
+.composer-label {
+  color: #aeb7c2;
+  font-size: 12px;
 }
 
 .team-panel {
@@ -448,6 +504,10 @@ button:hover {
   min-height: 72px;
 }
 
+.team-message-input {
+  min-height: 72px;
+}
+
 .team-roster,
 .team-flow,
 .team-tasks,
@@ -461,8 +521,29 @@ button:hover {
   overflow: auto;
 }
 
-.team-roster {
-  display: none;
+.team-review {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #2c343d;
+  border-radius: 6px;
+  background: #101214;
+}
+
+.team-review summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  color: #aeb7c2;
+  font-size: 13px;
+}
+
+.team-review[open] {
+  padding-bottom: 8px;
+}
+
+.team-review[open] > section {
+  margin: 0 8px;
 }
 
 .team-flow {
@@ -724,6 +805,15 @@ button:hover {
     text-indent: 0;
   }
 
+  #send-team-message,
+  #send-team-task,
+  .agent-card-message button {
+    width: auto;
+    min-width: 58px;
+    padding: 0 8px;
+    text-indent: 0;
+  }
+
   #toggle-conversation {
     width: 58px;
     padding: 0 8px;
@@ -737,6 +827,11 @@ button:hover {
   }
 
   .agent-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .team-composer-grid,
+  .agent-card-message {
     grid-template-columns: 1fr;
   }
 
