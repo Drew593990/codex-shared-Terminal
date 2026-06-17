@@ -259,6 +259,19 @@ button:hover {
   min-width: 0;
 }
 
+.agent-card-task-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-card-task-actions button {
+  height: 26px;
+  padding: 0 8px;
+}
+
 .agent-card-identity {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -419,6 +432,7 @@ button:hover {
 }
 
 .team-roster,
+.team-flow,
 .team-tasks,
 .team-inbox,
 .team-trace,
@@ -432,6 +446,71 @@ button:hover {
 
 .team-roster {
   display: none;
+}
+
+.team-flow {
+  min-height: 118px;
+}
+
+.team-flow-header,
+.team-flow-node,
+.team-flow-empty,
+.team-flow-events {
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid #2c343d;
+  border-radius: 6px;
+  background: #101214;
+}
+
+.team-flow-node[data-role="leader"] {
+  border-color: #6b8f71;
+}
+
+.team-flow-node[data-role="worker"] {
+  border-color: #4d6d89;
+}
+
+.team-flow-node[data-status="failed"],
+.team-flow-node[data-status="cancelled"] {
+  border-color: #69403f;
+}
+
+.team-flow-node-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.team-flow-title,
+.team-flow-meta,
+.team-flow-prompt,
+.team-flow-result,
+.team-flow-events,
+.team-flow-empty {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.team-flow-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+}
+
+.team-flow-meta,
+.team-flow-prompt,
+.team-flow-events,
+.team-flow-empty {
+  color: #aeb7c2;
+}
+
+.team-flow-result {
+  color: #9fd3c7;
 }
 
 .direct-conversation {

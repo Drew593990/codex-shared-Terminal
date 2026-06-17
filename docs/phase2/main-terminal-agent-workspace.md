@@ -234,9 +234,15 @@ Implemented on the `phase2` branch:
 - active roster agents render as structured `agent-card` child interfaces
   instead of peer PowerShell terminal panes;
 - each card shows agent id, profile, role, status, prompt, structured reply,
-  task result, remove/trace actions, and a collapsed raw CLI output section;
+  task result, remove action, task lifecycle actions, and a collapsed raw CLI
+  output section;
+- each card now exposes task-level Run, Stop, Retry, Resume, and Trace actions
+  backed by the existing durable task APIs;
 - the Agent Workspace header exposes profile selection, optional agent id,
   API token, add, and refresh controls;
+- a first-class `Team Flow` view summarizes leader and worker task nodes from
+  the latest team task or selected trace, so `@team` work is visible as a
+  workflow instead of only as separate task/inbox/trace lists;
 - `POST /api/team/commands/mention` accepts main-terminal commands such as
   `@echo inspect docs`, creates or reuses an agent, creates a task, dispatches
   it, and returns the updated agent/task;
@@ -247,11 +253,15 @@ Implemented on the `phase2` branch:
   chain, roster state, task completion, trace, and inbox;
 - browser verification confirmed that a typed main-terminal `@echo ...`
   command updates the `echo1` card and does not create peer terminal panes.
+- browser verification on an isolated smoke server confirmed that a split
+  `@team` task renders one leader node, two worker nodes, three agent cards,
+  card task controls, and no peer terminal panes.
 
 Remaining work for the full long-term product:
 
-- add richer card-level stop/cancel/retry controls for running real CLIs;
-- add a first-class leader review UI for multi-agent `@team` workflows;
+- add process-level termination for long-running real CLI turns; the current
+  Stop action records task cancellation through ShareTerminal task state but
+  does not yet kill an already-running external CLI subprocess;
 - validate the same card workflow with real `opencode` and Claude Code turns
   when token/budget conditions make that appropriate;
 - add a dedicated persisted UI setting for whether removed cards stay visible

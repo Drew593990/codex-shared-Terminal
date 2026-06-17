@@ -36,17 +36,18 @@ function Ensure-Agent {
     [Parameter(Mandatory = $true)][string]$AgentId,
     [Parameter(Mandatory = $true)][string]$Role
   )
-  try {
-    Invoke-JsonPost "$BaseUrl/api/team/roster/agents" @{
-      profileId = $ProfileId
-      agentId = $AgentId
-      role = $Role
-    } | Out-Null
-  } catch {
-    if ($_.Exception.Message -notmatch "Agent already exists") {
-      throw
-    }
+  $existingRoster = Invoke-RestMethod -Uri "$BaseUrl/api/team/roster"
+  $existingAgent = $existingRoster.roster | Where-Object {
+    $_.agentId -eq $AgentId -and $_.status -ne "removed"
+  } | Select-Object -First 1
+  if ($existingAgent) {
+    return
   }
+  Invoke-JsonPost "$BaseUrl/api/team/roster/agents" @{
+    profileId = $ProfileId
+    agentId = $AgentId
+    role = $Role
+  } | Out-Null
 }
 
 Ensure-Agent -ProfileId "echo" -AgentId "echo1" -Role "leader"

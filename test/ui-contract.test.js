@@ -18,6 +18,7 @@ test('browser UI exposes team task and trace surfaces', async () => {
   assert.match(html, /aria-label="Agent card workspace"/);
   assert.match(html, /id="agent-cards"/);
   assert.match(html, /id="team-tasks"/);
+  assert.match(html, /id="team-flow"/);
   assert.match(html, /id="team-trace"/);
   assert.match(html, /id="team-inbox"/);
   assert.match(app, /data-agent-id/);
@@ -26,6 +27,12 @@ test('browser UI exposes team task and trace surfaces', async () => {
   assert.match(app, /agent-card-reply/);
   assert.match(app, /agent-card-raw/);
   assert.match(app, /removeTeamAgent/);
+  assert.match(app, /renderAgentTaskActions/);
+  assert.match(app, /agent-card-task-actions/);
+  assert.match(app, /cardActionContext/);
+  assert.match(app, /renderTeamFlow/);
+  assert.match(app, /renderTeamFlowNode/);
+  assert.match(app, /team-flow-worker/);
   assert.match(app, /handleMainTerminalMention/);
   assert.match(app, /\/api\/team\/commands\/mention/);
   assert.match(app, /mainInputBuffer/);
@@ -45,6 +52,9 @@ test('browser UI exposes team task and trace surfaces', async () => {
   assert.match(css, /\.main-terminal-region/);
   assert.match(css, /\.agent-workspace/);
   assert.match(css, /\.agent-card/);
+  assert.match(css, /\.agent-card-task-actions/);
   assert.match(css, /\.agent-card-reply/);
   assert.match(css, /\.agent-card-raw/);
+  assert.match(css, /\.team-flow/);
+  assert.match(css, /\.team-flow-node/);
 });

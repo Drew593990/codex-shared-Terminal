@@ -24,6 +24,7 @@
   const sendTeamTaskButton = document.getElementById('send-team-task');
   const refreshTeamButton = document.getElementById('refresh-team');
   const teamTasks = document.getElementById('team-tasks');
+  const teamFlow = document.getElementById('team-flow');
   const teamInbox = document.getElementById('team-inbox');
   const teamTrace = document.getElementById('team-trace');
   const teamMessages = document.getElementById('team-messages');
@@ -474,6 +475,67 @@
     await loadTeamState();
   }
 
+  function cardActionContext(agent, task) {
+    return {
+      agentId: agent.agentId,
+      profileId: agent.profileId || '',
+      taskId: task?.taskId || '',
+      taskStatus: task?.status || 'idle'
+    };
+  }
+
+  function renderAgentTaskActions(agent, task) {
+    const actions = document.createElement('div');
+    actions.className = 'agent-card-task-actions';
+    const context = cardActionContext(agent, task);
+    actions.dataset.agentId = context.agentId;
+    actions.dataset.taskId = context.taskId;
+    actions.dataset.taskStatus = context.taskStatus;
+
+    const run = document.createElement('button');
+    run.type = 'button';
+    run.textContent = 'Run';
+    run.disabled = !task || !['queued', 'failed'].includes(task.status);
+    run.addEventListener('click', () => {
+      dispatchTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const stop = document.createElement('button');
+    stop.type = 'button';
+    stop.textContent = 'Stop';
+    stop.disabled = !task || !['queued', 'running'].includes(task.status);
+    stop.addEventListener('click', () => {
+      cancelTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = 'Retry';
+    retry.disabled = !task || !['failed', 'cancelled'].includes(task.status);
+    retry.addEventListener('click', () => {
+      retryTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const resume = document.createElement('button');
+    resume.type = 'button';
+    resume.textContent = 'Resume';
+    resume.disabled = !task || task.status !== 'needs_user';
+    resume.addEventListener('click', () => {
+      resumeTeamTask(task).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const trace = document.createElement('button');
+    trace.type = 'button';
+    trace.textContent = 'Trace';
+    trace.disabled = !task?.taskId;
+    trace.addEventListener('click', () => {
+      loadTeamTrace(task.taskId).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    actions.append(run, stop, retry, resume, trace);
+    return actions;
+  }
+
   function renderAgentCard(agent, context = {}) {
     const task = latestTaskForAgent(agent, context.tasks || []);
     const message = latestMessageForAgent(agent, context.messages || []);
@@ -522,13 +584,7 @@
       removeTeamAgent(agent).catch((error) => setTeamStatus(error.message, 'error'));
     });
 
-    const trace = document.createElement('button');
-    trace.type = 'button';
-    trace.textContent = 'Trace';
-    trace.disabled = !task?.taskId;
-    trace.addEventListener('click', () => {
-      loadTeamTrace(task.taskId).catch((error) => setTeamStatus(error.message, 'error'));
-    });
+    const taskActions = renderAgentTaskActions(agent, task);
 
     const raw = document.createElement('details');
     raw.className = 'agent-card-raw';
@@ -547,8 +603,8 @@
     raw.append(rawSummary, rawBody);
 
     header.append(identity, profile, status);
-    actions.append(remove, trace);
-    card.append(header, prompt, reply, result, actions, raw);
+    actions.append(remove);
+    card.append(header, prompt, reply, result, actions, taskActions, raw);
     return card;
   }
 
@@ -581,6 +637,130 @@
     main.append(route, status);
     item.append(main, body);
     return item;
+  }
+
+  function latestFlowRootTask(tasks = []) {
+    return [...tasks].reverse().find((task) => (
+      task.assignedTo === '@team' ||
+      (task.childTaskIds || []).length > 0 ||
+      tasks.some((candidate) => candidate.parentTaskId === task.taskId)
+    )) || [...tasks].reverse()[0] || null;
+  }
+
+  function renderTeamFlowNode(task, rootTask) {
+    const role = task.taskId === rootTask?.taskId
+      ? 'leader'
+      : (task.retryOf ? 'retry' : 'worker');
+    const roleClass = {
+      leader: 'team-flow-leader',
+      worker: 'team-flow-worker',
+      retry: 'team-flow-retry'
+    }[role];
+    const node = document.createElement('article');
+    node.className = `team-flow-node ${roleClass}`;
+    node.dataset.status = task.status || 'queued';
+    node.dataset.role = role;
+
+    const main = document.createElement('div');
+    main.className = 'team-flow-node-main';
+
+    const title = document.createElement('div');
+    title.className = 'team-flow-title';
+    title.textContent = role === 'leader'
+      ? `Leader ${task.leaderAgentId || task.assignedTo || ''}`.trim()
+      : `Worker ${task.assignedTo || task.claimedBy || task.leaderAgentId || ''}`.trim();
+
+    const status = document.createElement('div');
+    status.className = 'team-agent-role';
+    status.textContent = task.status || 'queued';
+
+    const meta = document.createElement('div');
+    meta.className = 'team-flow-meta';
+    meta.textContent = [
+      task.taskId,
+      task.retryOf ? `retry of ${task.retryOf}` : '',
+      task.parentTaskId ? `parent ${task.parentTaskId}` : ''
+    ].filter(Boolean).join(' | ');
+
+    const prompt = document.createElement('div');
+    prompt.className = 'team-flow-prompt';
+    prompt.textContent = task.prompt || '';
+
+    const result = document.createElement('div');
+    result.className = 'team-flow-result';
+    result.textContent = task.result || task.error || 'No result yet.';
+
+    main.append(title, status);
+    node.append(main, meta);
+    if (prompt.textContent) {
+      node.append(prompt);
+    }
+    node.append(result);
+    return node;
+  }
+
+  function renderTeamFlow(trace = {}) {
+    if (!teamFlow) {
+      return;
+    }
+    const tasks = (trace.tasks || []).filter(Boolean);
+    const rootTask = trace.task || latestFlowRootTask(tasks);
+    if (!rootTask) {
+      const empty = document.createElement('div');
+      empty.className = 'team-flow-empty';
+      empty.textContent = 'No team flow yet.';
+      teamFlow.replaceChildren(empty);
+      return;
+    }
+
+    const flowTasks = tasks.length > 0 ? tasks : [rootTask];
+    const header = document.createElement('div');
+    header.className = 'team-flow-header';
+
+    const title = document.createElement('div');
+    title.className = 'team-flow-title';
+    title.textContent = `Team flow ${rootTask.taskId}`;
+
+    const meta = document.createElement('div');
+    meta.className = 'team-flow-meta';
+    meta.textContent = [
+      rootTask.status || 'queued',
+      rootTask.assignedTo || '',
+      `${flowTasks.length} task${flowTasks.length === 1 ? '' : 's'}`
+    ].filter(Boolean).join(' | ');
+
+    const events = document.createElement('div');
+    events.className = 'team-flow-events';
+    events.textContent = (trace.events || [])
+      .slice(-4)
+      .map((event) => event.type)
+      .join(' -> ');
+
+    header.append(title, meta);
+    const nodes = flowTasks.map((task) => renderTeamFlowNode(task, rootTask));
+    teamFlow.replaceChildren(header, ...nodes);
+    if (events.textContent) {
+      teamFlow.append(events);
+    }
+  }
+
+  function renderTeamFlowSnapshot(tasks = []) {
+    const rootTask = latestFlowRootTask(tasks);
+    if (!rootTask) {
+      renderTeamFlow();
+      return;
+    }
+    const relatedTasks = tasks.filter((task) => (
+      task.taskId === rootTask.taskId ||
+      task.parentTaskId === rootTask.taskId ||
+      task.retryOf === rootTask.taskId ||
+      (rootTask.childTaskIds || []).includes(task.taskId)
+    ));
+    renderTeamFlow({
+      task: rootTask,
+      tasks: relatedTasks.length > 0 ? relatedTasks : [rootTask],
+      events: []
+    });
   }
 
   function renderTeamTask(task) {
@@ -795,6 +975,7 @@
       messages: messagesBody.messages,
       tasks: tasksBody.tasks.slice().reverse()
     });
+    renderTeamFlowSnapshot(tasksBody.tasks);
     lastTeamSignature = signature;
     setTeamStatus(`${rosterBody.roster.filter((agent) => agent.status !== 'removed').length} agents`, 'ok');
     await Promise.all([
@@ -995,6 +1176,7 @@
       return;
     }
     teamTrace.replaceChildren(...body.trace.events.slice(-8).map(renderTraceEvent));
+    renderTeamFlow(body.trace);
   }
 
   function renderTurn(turn, options = {}) {
