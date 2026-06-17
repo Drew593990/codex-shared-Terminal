@@ -30,6 +30,9 @@
   let session = new URLSearchParams(window.location.search).get('session') || 'main';
   let lastConversationSignature = '';
   let lastTeamSignature = '';
+  let mainInputBuffer = '';
+  let mainMentionMode = false;
+  let mainMentionCommand = '';
   const terminalPanes = new Map();
 
   sessionEl.textContent = session;
@@ -169,6 +172,9 @@
       });
     }
     paneTerminal.onData((data) => {
+      if (primary && handleMainTerminalInput(data, paneTerminal)) {
+        return;
+      }
       if (paneSocket && paneSocket.readyState === WebSocket.OPEN) {
         paneSocket.send(JSON.stringify({ type: 'input', data }));
       }
@@ -264,6 +270,93 @@
       authorization: `Bearer ${apiToken.value}`,
       'content-type': 'application/json'
     };
+  }
+
+  function resetMainMentionInput() {
+    mainInputBuffer = '';
+    mainMentionMode = false;
+    mainMentionCommand = '';
+  }
+
+  async function handleMainTerminalMention(input) {
+    const command = input.trim();
+    if (!command) {
+      return;
+    }
+    window.localStorage.setItem('shareterminal.token', apiToken.value);
+    terminal.write(`\r\n[shareterminal] dispatching ${command}\r\n`);
+    try {
+      const response = await fetch('/api/team/commands/mention', {
+        method: 'POST',
+        headers: teamHeaders(),
+        body: JSON.stringify({
+          input: command,
+          terminalSession: session
+        })
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        terminal.write(`[shareterminal] ${body.error || `mention ${response.status}`}\r\n`);
+        setTeamStatus(body.error || `mention ${response.status}`, 'error');
+        return;
+      }
+      terminal.write(`[shareterminal] ${body.agent.agentId} ${body.task.status} ${body.task.taskId}\r\n`);
+      setTeamStatus(`${body.agent.agentId} ${body.task.status}`, body.task.status === 'failed' ? 'error' : 'ok');
+      await loadTeamState();
+      await loadTeamTrace(body.task.taskId);
+    } catch (error) {
+      terminal.write(`[shareterminal] ${error.message}\r\n`);
+      setTeamStatus(error.message, 'error');
+    } finally {
+      terminal.focus();
+    }
+  }
+
+  function handleMainTerminalInput(data, paneTerminal) {
+    if (!data) {
+      return false;
+    }
+    const firstChar = data[0];
+    if (!mainMentionMode && mainInputBuffer === '' && firstChar !== '@') {
+      if (data.includes('\r') || data.includes('\n')) {
+        mainInputBuffer = '';
+      } else if (/^[\x20-\x7e]+$/.test(data)) {
+        mainInputBuffer += data;
+      }
+      return false;
+    }
+    if (!mainMentionMode && firstChar === '@') {
+      mainMentionMode = true;
+    }
+    if (!mainMentionMode) {
+      if (data.includes('\r') || data.includes('\n')) {
+        mainInputBuffer = '';
+      }
+      return false;
+    }
+
+    for (const char of data) {
+      if (char === '\r' || char === '\n') {
+        const command = mainMentionCommand || mainInputBuffer;
+        paneTerminal.write('\r\n');
+        resetMainMentionInput();
+        handleMainTerminalMention(command).catch((error) => setTeamStatus(error.message, 'error'));
+      } else if (char === '\u007f' || char === '\b') {
+        if (mainInputBuffer.length > 0) {
+          mainInputBuffer = mainInputBuffer.slice(0, -1);
+          mainMentionCommand = mainInputBuffer;
+          paneTerminal.write('\b \b');
+        }
+      } else if (char === '\u0003') {
+        paneTerminal.write('^C\r\n');
+        resetMainMentionInput();
+      } else if (char >= ' ') {
+        mainInputBuffer += char;
+        mainMentionCommand = mainInputBuffer;
+        paneTerminal.write(char);
+      }
+    }
+    return true;
   }
 
   function formatAgentWorkspace(agent) {

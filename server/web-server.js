@@ -292,6 +292,60 @@ function agentSession(agent = {}) {
   return agent.session || agent.agentId || null;
 }
 
+function parseMentionCommand(input) {
+  const command = String(input || '').trim();
+  const match = command.match(/^@([a-zA-Z0-9_.-]+)(?:\s+|$)/);
+  if (!match) {
+    return null;
+  }
+  return {
+    command,
+    token: match[1]
+  };
+}
+
+async function resolveMentionCommandTarget(teamStore, parsed) {
+  const roster = await teamStore.activeRoster();
+  if (parsed.token === 'team' || parsed.token === 'leader') {
+    const leader = await teamStore.leaderAgent();
+    return {
+      assignedTo: `@${parsed.token}`,
+      agent: leader
+    };
+  }
+
+  const exactAgent = roster.find((agent) => agent.agentId === parsed.token);
+  if (exactAgent) {
+    return {
+      assignedTo: exactAgent.agentId,
+      agent: exactAgent
+    };
+  }
+
+  const profiles = await teamStore.listAgentProfiles();
+  const profile = profiles.find((item) => item.profileId === parsed.token && item.enabled !== false);
+  if (!profile) {
+    const error = new Error(`Unknown agent or profile: ${parsed.token}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existing = roster.find((agent) => (
+    agent.profileId === parsed.token &&
+    agent.status === 'idle' &&
+    !agent.activeTaskId
+  )) || roster.find((agent) => agent.profileId === parsed.token);
+
+  const agent = existing || await teamStore.addRosterAgent({
+    profileId: parsed.token,
+    addedBy: 'terminal-command'
+  });
+  return {
+    assignedTo: agent.agentId,
+    agent
+  };
+}
+
 function worktreeInput(config, agent) {
   const cwd = path.resolve(config.cwd || process.cwd());
   const workspacePath = path.resolve(agent.workspace.path || '');
@@ -649,6 +703,65 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
       }
       response.json({ ok: true, tasks });
     } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/team/commands/mention', requireToken(config.token), async (request, response, next) => {
+    try {
+      requireTeamStore(teamStore);
+      requireAgentAdapter(agentAdapter);
+      const parsed = parseMentionCommand(request.body && request.body.input);
+      if (!parsed) {
+        response.status(400).json({ ok: false, error: 'input must start with an @agent mention' });
+        return;
+      }
+
+      const terminalSession = request.body.terminalSession || request.body.session || 'main';
+      const target = await resolveMentionCommandTarget(teamStore, parsed);
+      if (target.agent && typeof sessionManager.getOrCreateWithProfile === 'function') {
+        sessionManager.getOrCreateWithProfile(target.agent.session || target.agent.agentId, target.agent.profileId);
+      }
+
+      const task = await teamStore.createTask({
+        title: oneLine(parsed.command, 80) || 'Mention command',
+        prompt: parsed.command,
+        assignedTo: target.assignedTo,
+        leaderAgentId: target.agent?.role === 'leader' ? target.agent.agentId : undefined,
+        createdBy: 'terminal',
+        terminalSession
+      });
+      await publishTeamTaskNotice(sessionManager, terminalSession, task);
+
+      const dispatchAgent = await resolveDispatchAgent(teamStore, task);
+      const roster = await teamStore.listRoster();
+      const workerAgents = task.assignedTo === '@team'
+        ? mentionedRosterAgents(task, roster).filter((agent) => agent.agentId !== dispatchAgent.agentId)
+        : [];
+      const completedTask = workerAgents.length > 0
+        ? await dispatchSplitTeamTask({
+          teamStore,
+          agentAdapter,
+          sessionManager,
+          task,
+          leaderAgent: dispatchAgent,
+          workerAgents,
+          terminalSession
+        })
+        : await runDirectTeamTask({
+          teamStore,
+          agentAdapter,
+          sessionManager,
+          task,
+          agent: dispatchAgent,
+          terminalSession
+        });
+      response.json({ ok: true, agent: dispatchAgent, task: completedTask });
+    } catch (error) {
+      if (error.statusCode) {
+        response.status(error.statusCode).json({ ok: false, error: error.message });
+        return;
+      }
       next(error);
     }
   });

@@ -1393,6 +1393,62 @@ test('team dispatch marks failed agent runs as retryable inbox items', async () 
   }
 });
 
+test('terminal mention command creates or reuses an agent card and dispatches a task', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-mention-${++taskIndex}`
+  });
+  const manager = createFakeManager();
+  const agentAdapter = createFakeAgentAdapter();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    const firstResponse = await fetch(`${base}/api/team/commands/mention`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ input: '@echo inspect docs', terminalSession: 'main' })
+    });
+    const firstBody = await firstResponse.json();
+
+    assert.equal(firstResponse.status, 200);
+    assert.equal(firstBody.agent.profileId, 'echo');
+    assert.equal(firstBody.agent.agentId, 'echo1');
+    assert.equal(firstBody.task.status, 'completed');
+    assert.equal(firstBody.task.taskId, 'task-mention-1');
+    assert.match(firstBody.task.prompt, /@echo inspect docs/);
+
+    const secondResponse = await fetch(`${base}/api/team/commands/mention`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ input: '@echo inspect more', terminalSession: 'main' })
+    });
+    const secondBody = await secondResponse.json();
+    const roster = await teamStore.activeRoster();
+
+    assert.equal(secondResponse.status, 200);
+    assert.equal(secondBody.agent.agentId, 'echo1');
+    assert.equal(roster.length, 1);
+    assert.deepEqual(agentAdapter.calls.map((call) => call.input.agent.agentId), ['echo1', 'echo1']);
+    assert.equal(manager.createdAgentSessions.some((created) => created.name === 'echo1'), true);
+    assert.equal(manager.systemMessages.some((message) => message.name === 'echo1' && /\[team completed\] task-mention-1/.test(message.data)), true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team dispatch splits mentioned workers and returns leader final delivery', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   let taskIndex = 0;
