@@ -6,7 +6,9 @@ for ShareTerminal phase 2.
 ## Direction Update
 
 The UI direction in this document should now be read together with
-[`main-terminal-agent-workspace.md`](main-terminal-agent-workspace.md).
+[`main-terminal-agent-workspace.md`](main-terminal-agent-workspace.md) and the
+normative development contract in
+[`development-contract.md`](development-contract.md).
 
 The corrected product direction is not an equal multi-terminal grid. Phase 2
 should use one primary main terminal as the command and supervision surface,
@@ -101,7 +103,7 @@ future local agents to:
   workspace;
 - register available agents and their capabilities;
 - create tasks with durable ids and status;
-- assign tasks to visible terminal sessions or direct agents;
+- assign tasks to visible agent cards, the main terminal, or direct agents;
 - address specific agents with mentions such as `@opencode1`, `@opencode2`,
   `@claude-code1`, or `@codex1`;
 - let mentioned agents join a team conversation, negotiate work, split
@@ -159,14 +161,15 @@ flowchart LR
 
   Roster --> Dispatcher
   Mentions --> Messages
-  Dispatcher --> Sessions["Visible PTY session grid"]
+  Dispatcher --> MainTerminal["main visible terminal"]
+  Dispatcher --> Cards["Agent cards"]
   Dispatcher --> Direct["Direct agent turns"]
 
-  Sessions --> PowerShell["main PowerShell pane"]
-  Sessions --> OpenCode1["opencode1 pane"]
-  Sessions --> OpenCode2["opencode2 pane"]
-  Sessions --> Claude1["claude-code1 pane"]
-  Sessions --> AgentN["future agent pane"]
+  MainTerminal --> PowerShell["main PowerShell session"]
+  Cards --> OpenCode1["opencode1 structured card"]
+  Cards --> OpenCode2["opencode2 structured card"]
+  Cards --> Claude1["claude-code1 structured card"]
+  Cards --> AgentN["future agent card"]
 
   Direct --> OpenCodeRun["opencode direct adapter"]
   Direct --> ClaudeRun["claude direct adapter"]
@@ -627,8 +630,8 @@ Suggested panel sections:
   status, active child task, latest message, and last result;
 - Agents: available profiles, kind, capabilities, default command, enabled
   state;
-- Workspace Grid: multiple visible agent terminal panes in one browser
-  workspace;
+- Agent Workspace: structured child cards for selected local CLI profiles, with
+  raw CLI output collapsed by default;
 - Task Board: queued/running/completed/failed tasks;
 - Agent Messages: inter-agent messages and handoffs;
 - Inbox: results waiting for user/Codex acknowledgement;
@@ -641,7 +644,7 @@ Important UI rule:
 - The task subview must show which agents are participating in this task and
   which one is the leader before any team dispatch starts.
 - Adding another `opencode` or `claude` instance should create a new roster
-  entry and a visible pane/session, not replace the existing one.
+  entry and a visible card, not replace the existing one.
 - Removing an agent should leave its prior messages, task trace, and terminal
   transcript available for audit.
 - The final delivery should be visually tied to the leader's checked summary,
@@ -658,14 +661,15 @@ Important UI rule:
 - Add deterministic `echo` execution path.
 - Show task status and current roster in a basic browser panel.
 
-### Slice 2: Multi-Session Workspace View
+### Slice 2: Main Terminal And Agent Card Workspace
 
-- Add browser layout for multiple visible terminal sessions.
-- Keep each agent pane attached to its own named PTY session.
-- Preserve user focus and input routing per pane.
-- Show shared session status without hiding terminal output.
-- Add one-click add/remove controls for repeatable provider instances.
-- Mark the leader agent in the task subview.
+- Keep `main` as the only default visible terminal surface.
+- Add an Agent Workspace below the main terminal.
+- Render each roster instance as a structured card, not a peer terminal pane.
+- Preserve user focus in the main terminal while cards update below it.
+- Show prompt, reply, task state, result, and error as structured sections.
+- Keep raw CLI output available only as an expandable evidence/debug section.
+- Add controls to create, remove, stop, retry, resume, trace, and mark leader.
 
 ### Slice 3: Mention Router and Leader Planning
 
@@ -733,17 +737,18 @@ Each slice should include:
 - Should `@profileId` auto-select an idle instance, create a new instance, or
   ask the user when no exact `@agentId` is provided?
 - What is the minimum leader review evidence required before final delivery?
-- Should removed agent panes stay visible in a collapsed audit state or move
+- Should removed agent cards stay visible in a collapsed audit state or move
   only to trace/history?
 
 ## Near-Term Recommendation
 
 Start with Slice 1 and Slice 2 only, but design their data model around team
-rosters from the beginning.
+rosters and the main-terminal-plus-card UI contract from the beginning.
 
 This creates the missing foundations before deeper automation: durable task
 state, repeatable agent instances, add/remove lifecycle, leader marking, and a
-browser workspace that can show multiple live agents at once. After those are
+browser workspace that can show multiple live agents as cards below one main
+terminal. After those are
 stable, add mention routing, leader planning, dispatcher routing, shared
 context, agent messages, inbox, and trace. Avoid copying CCB internals. Use CCB
 as an architectural reference for boundaries: project anchor, dispatcher,

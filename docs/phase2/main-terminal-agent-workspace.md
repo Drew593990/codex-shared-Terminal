@@ -6,6 +6,11 @@ This document supersedes the earlier phase 2 UI direction that treated the
 workspace as a grid of equal terminal panes. That grid is not the desired
 interaction model.
 
+For future development, the normative contract is
+[`development-contract.md`](development-contract.md). This file explains the
+product direction and current implementation status; the contract file is the
+gate used for tests, UI review, and follow-up implementation work.
+
 ## Correct Product Direction
 
 ShareTerminal phase 2 should use one primary command surface:
@@ -168,7 +173,7 @@ does not satisfy the desired interaction model because:
 Future work should not continue expanding the equal-pane grid. It should
 replace it with the main-terminal-plus-agent-card model.
 
-## Implementation Direction
+## Implementation Direction For The Next Normalized Pass
 
 The implementation should proceed in small slices:
 
@@ -225,7 +230,7 @@ The revised phase 2 direction is not complete until these are true:
 - stale smoke/test agents do not clutter the default workspace;
 - backend task, message, inbox, and trace state remain durable and inspectable.
 
-## Implementation Status
+## Current Implementation Status
 
 Implemented on the `phase2` branch:
 
@@ -261,8 +266,17 @@ Implemented on the `phase2` branch:
 - browser verification on an isolated smoke server confirmed that a split
   `@team` task renders one leader node, two worker nodes, three agent cards,
   card task controls, and no peer terminal panes.
+- real local `opencode` and Claude Code direct card workflows were validated
+  through the main-terminal mention API. `@opencode` returned
+  `OPENCODE_CARD_SMOKE_OK`, and `@claude` returned `CLAUDE_CARD_SMOKE_OK`.
 
-Remaining work for the full long-term product:
+This implementation is a foundation, not the final normalized product contract.
+The next pass must be judged against
+[`development-contract.md`](development-contract.md), especially:
 
-- validate the same card workflow with real `opencode` and Claude Code turns
-  when token/budget conditions make that appropriate;
+- no default peer terminal panes under the main terminal;
+- agent work appears as structured cards with raw output collapsed by default;
+- `@profile`, `@agentId`, `@leader`, and `@team` route to the correct concrete
+  card and task owner;
+- user and Codex interaction stays in the same visible main terminal context;
+- browser verification confirms what the user can actually see and type into.
