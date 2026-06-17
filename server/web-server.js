@@ -377,20 +377,64 @@ function mentionedRosterAgents(task, roster) {
   return roster.filter((agent) => mentionIds.has(agent.agentId) && agent.status !== 'removed');
 }
 
-async function runDirectTeamTask({ teamStore, agentAdapter, sessionManager, task, agent, terminalSession }) {
+function abortRunningTaskControllers(taskAbortControllers, task, reason) {
+  if (!taskAbortControllers || !task) {
+    return;
+  }
+  const taskIds = new Set([
+    task.taskId,
+    ...(task.childTaskIds || [])
+  ]);
+  for (const taskId of taskIds) {
+    const controller = taskAbortControllers.get(taskId);
+    if (controller && !controller.signal.aborted) {
+      controller.abort(new Error(reason || `task cancelled: ${taskId}`));
+    }
+  }
+}
+
+function registerTaskAbortController(taskAbortControllers, taskId) {
+  if (!taskAbortControllers || !taskId) {
+    return null;
+  }
+  const controller = new AbortController();
+  taskAbortControllers.set(taskId, controller);
+  return controller;
+}
+
+function unregisterTaskAbortController(taskAbortControllers, taskId, controller) {
+  if (taskAbortControllers?.get(taskId) === controller) {
+    taskAbortControllers.delete(taskId);
+  }
+}
+
+async function runDirectTeamTask({ teamStore, agentAdapter, sessionManager, task, agent, terminalSession, taskAbortControllers }) {
   const noticeSession = agentSession(agent) || terminalSession || 'main';
   const runningTask = await teamStore.startTask(task.taskId, {
     agentId: agent.agentId,
     mode: 'direct'
   });
   await publishTeamTaskNotice(sessionManager, noticeSession, runningTask);
+  const abortController = registerTaskAbortController(taskAbortControllers, task.taskId);
   try {
     const result = await agentAdapter.runTurn(agent.profileId, {
       prompt: task.prompt,
       conversation: null,
       task,
-      agent
+      agent,
+      signal: abortController?.signal
     });
+    if (result.status === 'cancelled') {
+      let cancelledTask = await teamStore.getTask(task.taskId);
+      if (cancelledTask?.status !== 'cancelled') {
+        cancelledTask = await teamStore.cancelTask(task.taskId, {
+          agentId: agent.agentId,
+          reason: result.error || 'agent run cancelled'
+        });
+      }
+      await publishTeamTaskNotice(sessionManager, noticeSession, cancelledTask);
+      return cancelledTask;
+    }
     if (result.status === 'failed') {
       throw new Error(result.error || result.reply || 'agent run failed');
     }
@@ -402,16 +446,23 @@ async function runDirectTeamTask({ teamStore, agentAdapter, sessionManager, task
     await publishTeamTaskNotice(sessionManager, noticeSession, completedTask);
     return completedTask;
   } catch (error) {
+    const latestTask = await teamStore.getTask(task.taskId);
+    if (latestTask?.status === 'cancelled') {
+      await publishTeamTaskNotice(sessionManager, noticeSession, latestTask);
+      return latestTask;
+    }
     const failedTask = await teamStore.failTask(task.taskId, {
       agentId: agent.agentId,
       error: error.message
     });
     await publishTeamTaskNotice(sessionManager, noticeSession, failedTask);
     throw error;
+  } finally {
+    unregisterTaskAbortController(taskAbortControllers, task.taskId, abortController);
   }
 }
 
-async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, task, leaderAgent, workerAgents, terminalSession }) {
+async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, task, leaderAgent, workerAgents, terminalSession, taskAbortControllers }) {
   const leaderSession = agentSession(leaderAgent) || terminalSession || 'main';
   const runningParent = await teamStore.startTask(task.taskId, {
     agentId: leaderAgent.agentId,
@@ -438,7 +489,8 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
         sessionManager,
         task: childTask,
         agent: worker,
-        terminalSession: agentSession(worker) || terminalSession
+        terminalSession: agentSession(worker) || terminalSession,
+        taskAbortControllers
       });
       return {
         agentId: worker.agentId,
@@ -458,13 +510,31 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
       '',
       'Check the worker results against the original request and produce one concise final delivery.'
     ].join('\n');
-    const leaderResult = await agentAdapter.runTurn(leaderAgent.profileId, {
-      prompt: finalPrompt,
-      conversation: null,
-      task,
-      agent: leaderAgent,
-      workerResults
-    });
+    const leaderAbortController = registerTaskAbortController(taskAbortControllers, task.taskId);
+    let leaderResult;
+    try {
+      leaderResult = await agentAdapter.runTurn(leaderAgent.profileId, {
+        prompt: finalPrompt,
+        conversation: null,
+        task,
+        agent: leaderAgent,
+        workerResults,
+        signal: leaderAbortController?.signal
+      });
+    } finally {
+      unregisterTaskAbortController(taskAbortControllers, task.taskId, leaderAbortController);
+    }
+    if (leaderResult.status === 'cancelled') {
+      let cancelledParent = await teamStore.getTask(task.taskId);
+      if (cancelledParent?.status !== 'cancelled') {
+        cancelledParent = await teamStore.cancelTask(task.taskId, {
+          agentId: leaderAgent.agentId,
+          reason: leaderResult.error || 'leader run cancelled'
+        });
+      }
+      await publishTeamTaskNotice(sessionManager, leaderSession, cancelledParent);
+      return cancelledParent;
+    }
     const completedParent = await teamStore.completeTask(task.taskId, {
       agentId: leaderAgent.agentId,
       result: leaderResult.reply || leaderResult.error || finalPrompt,
@@ -475,6 +545,11 @@ async function dispatchSplitTeamTask({ teamStore, agentAdapter, sessionManager, 
     await publishTeamTaskNotice(sessionManager, leaderSession, completedParent);
     return completedParent;
   } catch (error) {
+    const latestParent = await teamStore.getTask(task.taskId);
+    if (latestParent?.status === 'cancelled') {
+      await publishTeamTaskNotice(sessionManager, leaderSession, latestParent);
+      return latestParent;
+    }
     const failedParent = await teamStore.failTask(task.taskId, {
       agentId: leaderAgent.agentId,
       error: error.message
@@ -489,6 +564,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
   const rootDir = config.rootDir || path.resolve(__dirname, '..');
+  const taskAbortControllers = new Map();
 
   app.use(express.json({ limit: '64kb' }));
 
@@ -746,7 +822,8 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
           task,
           leaderAgent: dispatchAgent,
           workerAgents,
-          terminalSession
+          terminalSession,
+          taskAbortControllers
         })
         : await runDirectTeamTask({
           teamStore,
@@ -754,7 +831,8 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
           sessionManager,
           task,
           agent: dispatchAgent,
-          terminalSession
+          terminalSession,
+          taskAbortControllers
         });
       response.json({ ok: true, agent: dispatchAgent, task: completedTask });
     } catch (error) {
@@ -841,6 +919,7 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
     try {
       requireTeamStore(teamStore);
       const task = await teamStore.cancelTask(request.params.taskId, request.body || {});
+      abortRunningTaskControllers(taskAbortControllers, task, task.error);
       await publishTeamTaskNotice(sessionManager, request.body.terminalSession || request.body.session || 'main', task);
       response.json({ ok: true, task });
     } catch (error) {
@@ -883,7 +962,8 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
           task,
           leaderAgent: dispatchAgent,
           workerAgents,
-          terminalSession: request.body.terminalSession || request.body.session || dispatchAgent.session || 'main'
+          terminalSession: request.body.terminalSession || request.body.session || dispatchAgent.session || 'main',
+          taskAbortControllers
         })
         : await runDirectTeamTask({
           teamStore,
@@ -891,7 +971,8 @@ function createWebServer({ sessionManager, config, conversationStore, teamStore,
           sessionManager,
           task,
           agent: dispatchAgent,
-          terminalSession: request.body.terminalSession || request.body.session || dispatchAgent.session || 'main'
+          terminalSession: request.body.terminalSession || request.body.session || dispatchAgent.session || 'main',
+          taskAbortControllers
         });
       response.json({ ok: true, task: completedTask });
     } catch (error) {

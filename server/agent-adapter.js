@@ -222,6 +222,17 @@ function killProcessTree(child, spawnFactory) {
   }
 }
 
+function abortReason(signal) {
+  const reason = signal?.reason;
+  if (!reason) {
+    return 'agent run cancelled';
+  }
+  if (reason instanceof Error) {
+    return reason.message;
+  }
+  return String(reason);
+}
+
 class AgentAdapter {
   constructor(options = {}) {
     this.profiles = options.profiles || {};
@@ -266,6 +277,8 @@ class AgentAdapter {
   runCommand(agentName, profile, input) {
     const args = this.commandArgs(agentName, profile, input);
     const command = profile.command;
+    const timeoutMs = profile.timeoutMs || this.defaultTimeoutMs;
+    const signal = input.signal;
     const options = {
       cwd: profile.cwd || process.cwd(),
       env: { ...process.env, ...(profile.env || {}) },
@@ -273,11 +286,23 @@ class AgentAdapter {
       windowsHide: true
     };
 
+    if (signal?.aborted) {
+      return Promise.resolve({
+        agent: agentName,
+        reply: '',
+        status: 'cancelled',
+        error: abortReason(signal),
+        raw: { command, args, stdout: '', stderr: '', cancelled: true },
+        agentState: input.conversation?.agentState || {}
+      });
+    }
+
     return new Promise((resolve) => {
       let stdout = '';
       let stderr = '';
       let settled = false;
       let child;
+      let abortHandler;
 
       const finish = (result) => {
         if (settled) {
@@ -285,6 +310,9 @@ class AgentAdapter {
         }
         settled = true;
         clearTimeout(timer);
+        if (abortHandler) {
+          signal?.removeEventListener?.('abort', abortHandler);
+        }
         resolve(result);
       };
 
@@ -298,8 +326,7 @@ class AgentAdapter {
           raw: { command, args, stdout, stderr, timedOut: true },
           agentState: input.conversation?.agentState || {}
         });
-      }, profile.timeoutMs || this.defaultTimeoutMs);
-      const timeoutMs = profile.timeoutMs || this.defaultTimeoutMs;
+      }, timeoutMs);
 
       try {
         child = this.spawnFactory(command, args, options);
@@ -312,6 +339,23 @@ class AgentAdapter {
           raw: { command, args, stdout, stderr },
           agentState: input.conversation?.agentState || {}
         });
+        return;
+      }
+
+      abortHandler = () => {
+        killProcessTree(child, this.spawnFactory);
+        finish({
+          agent: agentName,
+          reply: '',
+          status: 'cancelled',
+          error: abortReason(signal),
+          raw: { command, args, stdout, stderr, cancelled: true },
+          agentState: input.conversation?.agentState || {}
+        });
+      };
+      signal?.addEventListener?.('abort', abortHandler, { once: true });
+      if (signal?.aborted) {
+        abortHandler();
         return;
       }
 
@@ -350,6 +394,8 @@ class AgentAdapter {
   runPtyCommand(agentName, profile, input) {
     const args = this.commandArgs(agentName, profile, input);
     const command = profile.command;
+    const timeoutMs = profile.timeoutMs || this.defaultTimeoutMs;
+    const signal = input.signal;
     const options = {
       cwd: profile.cwd || process.cwd(),
       env: { ...process.env, ...(profile.env || {}) },
@@ -358,12 +404,24 @@ class AgentAdapter {
       name: profile.term || 'xterm-color'
     };
 
+    if (signal?.aborted) {
+      return Promise.resolve({
+        agent: agentName,
+        reply: '',
+        status: 'cancelled',
+        error: abortReason(signal),
+        raw: { command, args, stdout: '', stderr: '', cancelled: true, pty: true },
+        agentState: input.conversation?.agentState || {}
+      });
+    }
+
     return new Promise((resolve) => {
       let output = '';
       let settled = false;
       let commandPty;
       let dataSubscription;
       let exitSubscription;
+      let abortHandler;
 
       const finish = (result) => {
         if (settled) {
@@ -371,6 +429,9 @@ class AgentAdapter {
         }
         settled = true;
         clearTimeout(timer);
+        if (abortHandler) {
+          signal?.removeEventListener?.('abort', abortHandler);
+        }
         dataSubscription?.dispose?.();
         exitSubscription?.dispose?.();
         resolve(result);
@@ -386,8 +447,7 @@ class AgentAdapter {
           raw: { command, args, stdout: stripAnsi(output), stderr: '', timedOut: true, pty: true },
           agentState: input.conversation?.agentState || {}
         });
-      }, profile.timeoutMs || this.defaultTimeoutMs);
-      const timeoutMs = profile.timeoutMs || this.defaultTimeoutMs;
+      }, timeoutMs);
 
       try {
         commandPty = this.ptyFactory(command, args, options);
@@ -400,6 +460,23 @@ class AgentAdapter {
           raw: { command, args, stdout: stripAnsi(output), stderr: '', pty: true },
           agentState: input.conversation?.agentState || {}
         });
+        return;
+      }
+
+      abortHandler = () => {
+        killProcessTree(commandPty, this.spawnFactory);
+        finish({
+          agent: agentName,
+          reply: '',
+          status: 'cancelled',
+          error: abortReason(signal),
+          raw: { command, args, stdout: stripAnsi(output), stderr: '', cancelled: true, pty: true },
+          agentState: input.conversation?.agentState || {}
+        });
+      };
+      signal?.addEventListener?.('abort', abortHandler, { once: true });
+      if (signal?.aborted) {
+        abortHandler();
         return;
       }
 

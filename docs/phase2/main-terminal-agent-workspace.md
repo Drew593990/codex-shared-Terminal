@@ -238,11 +238,16 @@ Implemented on the `phase2` branch:
   output section;
 - each card now exposes task-level Run, Stop, Retry, Resume, and Trace actions
   backed by the existing durable task APIs;
+- Stop now propagates through the running team task to the direct agent
+  adapter. Command and PTY-based local CLI turns receive an abort signal and
+  their subprocess is killed before the task settles as `cancelled`;
 - the Agent Workspace header exposes profile selection, optional agent id,
   API token, add, and refresh controls;
 - a first-class `Team Flow` view summarizes leader and worker task nodes from
   the latest team task or selected trace, so `@team` work is visible as a
   workflow instead of only as separate task/inbox/trace lists;
+- removed cards are hidden by default but can be shown as collapsed audit
+  records through a persisted `Removed` toggle in the Agent Workspace header;
 - `POST /api/team/commands/mention` accepts main-terminal commands such as
   `@echo inspect docs`, creates or reuses an agent, creates a task, dispatches
   it, and returns the updated agent/task;
@@ -259,10 +264,5 @@ Implemented on the `phase2` branch:
 
 Remaining work for the full long-term product:
 
-- add process-level termination for long-running real CLI turns; the current
-  Stop action records task cancellation through ShareTerminal task state but
-  does not yet kill an already-running external CLI subprocess;
 - validate the same card workflow with real `opencode` and Claude Code turns
   when token/budget conditions make that appropriate;
-- add a dedicated persisted UI setting for whether removed cards stay visible
-  as collapsed audit records.

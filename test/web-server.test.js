@@ -777,6 +777,104 @@ test('team dispatch API runs the assigned direct agent and exposes trace', async
   }
 });
 
+test('team cancel API aborts a running direct agent turn and preserves cancelled task state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-cancel-'));
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => 'task-cancel-running-1',
+    messageIdFactory: (() => {
+      let index = 0;
+      return () => `message-cancel-running-${++index}`;
+    })()
+  });
+  const manager = createFakeManager();
+  let seenSignal;
+  let releaseRunStarted;
+  const runStarted = new Promise((resolve) => {
+    releaseRunStarted = resolve;
+  });
+  const agentAdapter = {
+    calls: [],
+    listAgents: () => [{ name: 'echo', label: 'Echo', mode: 'echo' }],
+    async runTurn(agent, input) {
+      this.calls.push({ agent, input });
+      seenSignal = input.signal;
+      releaseRunStarted();
+      if (!input.signal) {
+        return {
+          agent,
+          reply: '',
+          status: 'failed',
+          error: 'missing abort signal',
+          raw: {}
+        };
+      }
+      return new Promise((resolve) => {
+        input.signal.addEventListener('abort', () => {
+          resolve({
+            agent,
+            reply: '',
+            status: 'cancelled',
+            error: 'aborted by cancel endpoint',
+            raw: { cancelled: true }
+          });
+        }, { once: true });
+      });
+    }
+  };
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1' });
+    const task = await teamStore.createTask({
+      title: 'Cancelable dispatch',
+      prompt: '@leader run until stopped',
+      createdBy: 'codex',
+      assignedTo: '@leader'
+    });
+
+    const dispatchPromise = fetch(`${base}/api/team/tasks/${task.taskId}/dispatch`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main' })
+    });
+    await runStarted;
+    assert.ok(seenSignal, 'dispatch should pass an AbortSignal to the agent adapter');
+
+    const cancelResponse = await fetch(`${base}/api/team/tasks/${task.taskId}/cancel`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ terminalSession: 'main', reason: 'user clicked Stop' })
+    });
+    const cancelBody = await cancelResponse.json();
+    assert.equal(cancelResponse.status, 200);
+    assert.equal(cancelBody.task.status, 'cancelled');
+    assert.equal(seenSignal.aborted, true);
+
+    const dispatchResponse = await dispatchPromise;
+    const dispatchBody = await dispatchResponse.json();
+    assert.equal(dispatchResponse.status, 200);
+    assert.equal(dispatchBody.task.status, 'cancelled');
+
+    const stored = await teamStore.getTask(task.taskId);
+    assert.equal(stored.status, 'cancelled');
+    assert.equal(stored.error, 'user clicked Stop');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team inbox API exposes completed results and supports ack', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   const teamStore = new TeamStore(root, {

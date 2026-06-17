@@ -17,6 +17,7 @@ test('browser UI exposes team task and trace surfaces', async () => {
   assert.match(html, /id="agent-workspace"/);
   assert.match(html, /aria-label="Agent card workspace"/);
   assert.match(html, /id="agent-cards"/);
+  assert.match(html, /id="show-removed-agents"/);
   assert.match(html, /id="team-tasks"/);
   assert.match(html, /id="team-flow"/);
   assert.match(html, /id="team-trace"/);
@@ -30,6 +31,8 @@ test('browser UI exposes team task and trace surfaces', async () => {
   assert.match(app, /renderAgentTaskActions/);
   assert.match(app, /agent-card-task-actions/);
   assert.match(app, /cardActionContext/);
+  assert.match(app, /shareterminal\.showRemovedAgents/);
+  assert.match(app, /renderRemovedAgentCard/);
   assert.match(app, /renderTeamFlow/);
   assert.match(app, /renderTeamFlowNode/);
   assert.match(app, /team-flow-worker/);

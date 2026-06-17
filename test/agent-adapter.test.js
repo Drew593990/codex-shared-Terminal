@@ -30,6 +30,20 @@ function fakeChild({ stdout = '', stderr = '', exitCode = 0 }) {
   return child;
 }
 
+function hangingChild() {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = {
+    end() {},
+    write() {}
+  };
+  child.kill = () => {
+    child.killed = true;
+  };
+  return child;
+}
+
 class FakePty extends EventEmitter {
   constructor({ output = '', exitCode = 0 }) {
     super();
@@ -151,6 +165,79 @@ test('AgentAdapter command mode sends prompt through stdin when configured', asy
 
   assert.deepEqual(child.stdin.writes, ['Reply exactly: CLAUDE_OK']);
   assert.equal(result.reply, 'CLAUDE_OK');
+});
+
+test('AgentAdapter command mode cancels a running subprocess when aborted', async () => {
+  let child;
+  const controller = new AbortController();
+  const adapter = new AgentAdapter({
+    profiles: {
+      cli: {
+        label: 'Cancelable CLI',
+        mode: 'command',
+        command: 'cli',
+        args: [],
+        promptMode: 'arg',
+        responseFormat: 'text'
+      }
+    },
+    spawnFactory() {
+      child = hangingChild();
+      return child;
+    }
+  });
+
+  const run = adapter.runTurn('cli', {
+    prompt: 'long task',
+    signal: controller.signal
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort(new Error('user stopped task'));
+  const result = await run;
+
+  assert.equal(result.status, 'cancelled');
+  assert.match(result.error, /user stopped task/);
+  assert.equal(result.raw.cancelled, true);
+  assert.equal(child.killed, true);
+});
+
+test('AgentAdapter PTY command mode cancels a running subprocess when aborted', async () => {
+  let commandPty;
+  const controller = new AbortController();
+  const adapter = new AgentAdapter({
+    profiles: {
+      opencode: {
+        label: 'opencode',
+        mode: 'command',
+        command: 'opencode.exe',
+        args: ['run'],
+        promptMode: 'arg',
+        responseFormat: 'text',
+        usePty: true
+      }
+    },
+    ptyFactory(command, args, options) {
+      commandPty = new FakePty({ output: '' });
+      commandPty.onExit = (handler) => {
+        commandPty.on('exit', handler);
+        return { dispose: () => commandPty.off('exit', handler) };
+      };
+      return commandPty;
+    }
+  });
+
+  const run = adapter.runTurn('opencode', {
+    prompt: 'long task',
+    signal: controller.signal
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort(new Error('user stopped pty'));
+  const result = await run;
+
+  assert.equal(result.status, 'cancelled');
+  assert.match(result.error, /user stopped pty/);
+  assert.equal(result.raw.cancelled, true);
+  assert.equal(commandPty.killed, true);
 });
 
 test('AgentAdapter pty command mode captures TTY-only CLI output', async () => {

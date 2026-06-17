@@ -17,6 +17,7 @@
   const teamStatus = document.getElementById('team-status');
   const teamProfileSelect = document.getElementById('team-profile-select');
   const teamAgentId = document.getElementById('team-agent-id');
+  const showRemovedAgents = document.getElementById('show-removed-agents');
   const addTeamAgentButton = document.getElementById('add-team-agent');
   const agentCards = document.getElementById('agent-cards');
   const teamRoster = document.getElementById('team-roster');
@@ -55,6 +56,7 @@
   sessionEl.textContent = session;
   conversationIdInput.value = safeLocalStorage.getItem('shareterminal.conversationId') || 'direct-main';
   apiToken.value = safeLocalStorage.getItem('shareterminal.token') || '';
+  showRemovedAgents.checked = safeLocalStorage.getItem('shareterminal.showRemovedAgents') === 'true';
 
   function createTerminal() {
     return new Terminal({
@@ -608,10 +610,54 @@
     return card;
   }
 
+  function renderRemovedAgentCard(agent, context = {}) {
+    const task = latestTaskForAgent(agent, context.tasks || []);
+    const message = latestMessageForAgent(agent, context.messages || []);
+    const card = document.createElement('article');
+    card.className = 'agent-card agent-card-removed';
+    card.dataset.agentId = agent.agentId;
+    card.dataset.profileId = agent.profileId || '';
+    card.dataset.status = 'removed';
+    card.setAttribute('data-agent-id', agent.agentId);
+
+    const header = document.createElement('div');
+    header.className = 'agent-card-header';
+
+    const identity = document.createElement('div');
+    identity.className = 'agent-card-identity';
+    identity.textContent = agent.agentId;
+
+    const profile = document.createElement('div');
+    profile.className = 'agent-card-profile';
+    profile.textContent = `${agent.profileId || 'agent'} | removed`;
+
+    const audit = document.createElement('details');
+    audit.className = 'agent-card-audit';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Removed audit';
+
+    const body = document.createElement('div');
+    body.className = 'agent-card-result';
+    body.textContent = [
+      task ? `${task.taskId} | ${task.status}` : 'No linked task.',
+      message?.body || ''
+    ].filter(Boolean).join('\n');
+
+    header.append(identity, profile);
+    audit.append(summary, body);
+    card.append(header, audit);
+    return card;
+  }
+
   function renderAgentCards(roster, context = {}) {
+    const includeRemoved = showRemovedAgents?.checked;
     const cards = roster
-      .filter((agent) => agent.status !== 'removed')
-      .map((agent) => renderAgentCard(agent, context));
+      .filter((agent) => agent.status !== 'removed' || includeRemoved)
+      .map((agent) => (
+        agent.status === 'removed'
+          ? renderRemovedAgentCard(agent, context)
+          : renderAgentCard(agent, context)
+      ));
     agentCards.replaceChildren(...cards);
   }
 
@@ -964,7 +1010,8 @@
         agent.workspace?.path
       ]),
       messages: messagesBody.messages.map((message) => [message.messageId, message.status]),
-      tasks: tasksBody.tasks.map((task) => [task.taskId, task.status, task.result])
+      tasks: tasksBody.tasks.map((task) => [task.taskId, task.status, task.result]),
+      showRemoved: showRemovedAgents?.checked
     });
     if (signature === lastTeamSignature && options.silent) {
       return;
@@ -1302,9 +1349,13 @@
   sendAgentButton.addEventListener('click', sendAgentPrompt);
   addTeamAgentButton.addEventListener('click', addTeamAgent);
   sendTeamTaskButton.addEventListener('click', sendTeamTask);
-  refreshTeamButton.addEventListener('click', () => {
-    Promise.all([loadTeamProfiles(), loadTeamState()]).catch((error) => setTeamStatus(error.message, 'error'));
-  });
+      refreshTeamButton.addEventListener('click', () => {
+        Promise.all([loadTeamProfiles(), loadTeamState()]).catch((error) => setTeamStatus(error.message, 'error'));
+      });
+      showRemovedAgents.addEventListener('change', () => {
+        safeLocalStorage.setItem('shareterminal.showRemovedAgents', showRemovedAgents.checked ? 'true' : 'false');
+        loadTeamState().catch((error) => setTeamStatus(error.message, 'error'));
+      });
   conversationIdInput.addEventListener('change', () => {
     safeLocalStorage.setItem('shareterminal.conversationId', conversationIdInput.value.trim());
     lastConversationSignature = '';
