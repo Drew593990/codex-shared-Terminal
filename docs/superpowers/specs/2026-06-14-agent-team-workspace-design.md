@@ -2,6 +2,23 @@
 
 Date: 2026-06-14
 
+## Superseded UI Direction
+
+The equal multi-terminal grid direction in this spec has been superseded by the
+main-terminal-with-agent-cards direction documented in
+`docs/phase2/main-terminal-agent-workspace.md`.
+
+The corrected direction is:
+
+- keep one real main xterm terminal as the command and supervision surface;
+- place agent child interfaces below the main terminal;
+- render child interfaces as structured dialogue/task/result cards by default;
+- allow raw CLI output to be expanded inside each card when needed;
+- let users add/remove child interfaces and choose which local agent CLI each
+  card runs;
+- let main-terminal mentions such as `@opencode`, `@claude`, and `@team`
+  create or reuse cards and drive backend dispatch.
+
 ## Approved Direction
 
 Use one browser workspace with a visible multi-terminal grid.

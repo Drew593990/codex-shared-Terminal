@@ -3,6 +3,20 @@
 This document records the target, design direction, and implementation approach
 for ShareTerminal phase 2.
 
+## Direction Update
+
+The UI direction in this document should now be read together with
+[`main-terminal-agent-workspace.md`](main-terminal-agent-workspace.md).
+
+The corrected product direction is not an equal multi-terminal grid. Phase 2
+should use one primary main terminal as the command and supervision surface,
+with agent child interfaces underneath it. The child interfaces should default
+to structured prompt/reply/result cards and expose raw CLI output only as an
+expandable evidence/debug section. Users should be able to add, remove, and
+choose the local agent CLI for each child interface. Mentions typed in the main
+terminal, such as `@opencode`, `@claude`, and `@team`, should create or reuse
+those child interfaces and drive backend team coordination.
+
 ## Background
 
 Phase 1 proved the core shared-terminal bridge:
