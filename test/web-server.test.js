@@ -1547,6 +1547,49 @@ test('terminal mention command creates or reuses an agent card and dispatches a 
   }
 });
 
+test('terminal profile mention prefers an idle non-leader concrete agent', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
+  let taskIndex = 0;
+  const teamStore = new TeamStore(root, {
+    profiles: {
+      echo: { label: 'Echo', mode: 'echo' }
+    },
+    taskIdFactory: () => `task-profile-mention-${++taskIndex}`
+  });
+  await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo1', role: 'leader' });
+  await teamStore.addRosterAgent({ profileId: 'echo', agentId: 'echo2', role: 'worker' });
+  const manager = createFakeManager();
+  const agentAdapter = createFakeAgentAdapter();
+  const { server } = createWebServer({
+    sessionManager: manager,
+    teamStore,
+    agentAdapter,
+    config: { token: 'secret', publicDir: process.cwd() }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    const response = await fetch(`${base}/api/team/commands/mention`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ input: '@echo inspect from terminal', terminalSession: 'main' })
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.agent.agentId, 'echo2');
+    assert.equal(body.task.assignedTo, 'echo2');
+    assert.equal(body.task.leaderAgentId, 'echo1');
+    assert.deepEqual(body.task.mentionRoutes.map((route) => route.agentId), ['echo2']);
+    assert.deepEqual(agentAdapter.calls.map((call) => call.input.agent.agentId), ['echo2']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team dispatch splits mentioned workers and returns leader final delivery', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'shareterminal-team-api-'));
   let taskIndex = 0;

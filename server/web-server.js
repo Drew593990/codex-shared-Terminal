@@ -330,11 +330,12 @@ async function resolveMentionCommandTarget(teamStore, parsed) {
     throw error;
   }
 
-  const existing = roster.find((agent) => (
-    agent.profileId === parsed.token &&
-    agent.status === 'idle' &&
-    !agent.activeTaskId
-  )) || roster.find((agent) => agent.profileId === parsed.token);
+  const candidates = roster.filter((agent) => agent.profileId === parsed.token);
+  const idleCandidates = candidates.filter((agent) => agent.status === 'idle' && !agent.activeTaskId);
+  const existing = idleCandidates.find((agent) => agent.role !== 'leader') ||
+    idleCandidates[0] ||
+    candidates.find((agent) => agent.role !== 'leader') ||
+    candidates[0];
 
   const agent = existing || await teamStore.addRosterAgent({
     profileId: parsed.token,
