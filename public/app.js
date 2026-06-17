@@ -18,6 +18,7 @@
   const teamProfileSelect = document.getElementById('team-profile-select');
   const teamAgentId = document.getElementById('team-agent-id');
   const addTeamAgentButton = document.getElementById('add-team-agent');
+  const agentCards = document.getElementById('agent-cards');
   const teamRoster = document.getElementById('team-roster');
   const teamPrompt = document.getElementById('team-prompt');
   const sendTeamTaskButton = document.getElementById('send-team-task');
@@ -309,6 +310,146 @@
     return item;
   }
 
+  function latestTaskForAgent(agent, tasks = []) {
+    return tasks.find((task) => (
+      task.assignedTo === agent.agentId ||
+      task.leaderAgentId === agent.agentId ||
+      task.claimedBy === agent.agentId ||
+      task.lastAttemptAgentId === agent.agentId ||
+      (task.mentionRoutes || []).some((route) => route.agentId === agent.agentId)
+    )) || null;
+  }
+
+  function latestMessageForAgent(agent, messages = []) {
+    return [...messages].reverse().find((message) => (
+      message.to === agent.agentId ||
+      message.from === agent.agentId ||
+      (message.mentions || []).includes(`@${agent.agentId}`)
+    )) || null;
+  }
+
+  async function loadAgentRawOutput(agent, target) {
+    const sessionName = agent.session || agent.agentId;
+    target.textContent = 'loading raw output...';
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionName)}/transcript?limit=40`);
+      const body = await response.json();
+      if (!response.ok) {
+        target.textContent = body.error || `transcript ${response.status}`;
+        return;
+      }
+      const records = body.records || body.transcript || [];
+      target.textContent = records
+        .map((record) => record.data || record.input || record.output || '')
+        .filter(Boolean)
+        .join('')
+        .trim() || 'No raw CLI output recorded yet.';
+    } catch (error) {
+      target.textContent = error.message;
+    }
+  }
+
+  async function removeTeamAgent(agent) {
+    setTeamStatus(`removing ${agent.agentId}`, 'running');
+    const response = await fetch(`/api/team/roster/agents/${encodeURIComponent(agent.agentId)}/remove`, {
+      method: 'POST',
+      headers: teamHeaders(),
+      body: JSON.stringify({})
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setTeamStatus(body.error || `remove ${response.status}`, 'error');
+      return;
+    }
+    setTeamStatus(`removed ${agent.agentId}`, 'ok');
+    await loadTeamState();
+  }
+
+  function renderAgentCard(agent, context = {}) {
+    const task = latestTaskForAgent(agent, context.tasks || []);
+    const message = latestMessageForAgent(agent, context.messages || []);
+    const card = document.createElement('article');
+    card.className = 'agent-card';
+    card.dataset.agentId = agent.agentId;
+    card.dataset.profileId = agent.profileId || '';
+    card.dataset.status = agent.status || 'idle';
+    card.setAttribute('data-agent-id', agent.agentId);
+
+    const header = document.createElement('div');
+    header.className = 'agent-card-header';
+
+    const identity = document.createElement('div');
+    identity.className = 'agent-card-identity';
+    identity.textContent = agent.agentId;
+
+    const profile = document.createElement('div');
+    profile.className = 'agent-card-profile';
+    profile.textContent = `${agent.profileId || 'agent'} | ${agent.role || 'worker'}`;
+
+    const status = document.createElement('div');
+    status.className = 'agent-card-status';
+    status.textContent = agent.activeTaskId || agent.status || 'idle';
+
+    const prompt = document.createElement('div');
+    prompt.className = 'agent-card-prompt';
+    prompt.textContent = task?.prompt || 'No assigned prompt yet.';
+
+    const reply = document.createElement('div');
+    reply.className = 'agent-card-reply';
+    reply.textContent = task?.result || message?.body || 'Waiting for agent output.';
+
+    const result = document.createElement('div');
+    result.className = 'agent-card-result';
+    result.textContent = task ? `${task.taskId} | ${task.status}` : 'No task linked.';
+
+    const actions = document.createElement('div');
+    actions.className = 'agent-card-actions';
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.disabled = ['planning', 'running', 'reviewing'].includes(agent.status);
+    remove.addEventListener('click', () => {
+      removeTeamAgent(agent).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const trace = document.createElement('button');
+    trace.type = 'button';
+    trace.textContent = 'Trace';
+    trace.disabled = !task?.taskId;
+    trace.addEventListener('click', () => {
+      loadTeamTrace(task.taskId).catch((error) => setTeamStatus(error.message, 'error'));
+    });
+
+    const raw = document.createElement('details');
+    raw.className = 'agent-card-raw';
+    const rawSummary = document.createElement('summary');
+    rawSummary.textContent = 'Raw CLI output';
+    const rawBody = document.createElement('pre');
+    rawBody.className = 'agent-card-raw-body';
+    rawBody.textContent = 'Expand to load raw CLI output.';
+    raw.addEventListener('toggle', () => {
+      if (raw.open && rawBody.textContent === 'Expand to load raw CLI output.') {
+        loadAgentRawOutput(agent, rawBody).catch((error) => {
+          rawBody.textContent = error.message;
+        });
+      }
+    });
+    raw.append(rawSummary, rawBody);
+
+    header.append(identity, profile, status);
+    actions.append(remove, trace);
+    card.append(header, prompt, reply, result, actions, raw);
+    return card;
+  }
+
+  function renderAgentCards(roster, context = {}) {
+    const cards = roster
+      .filter((agent) => agent.status !== 'removed')
+      .map((agent) => renderAgentCard(agent, context));
+    agentCards.replaceChildren(...cards);
+  }
+
   function renderTeamMessage(message) {
     const item = document.createElement('article');
     item.className = 'team-message';
@@ -501,30 +642,25 @@
     });
   }
 
-  function syncAgentPanes(roster) {
-    roster
-      .filter((agent) => agent.status !== 'removed')
-      .forEach((agent) => {
-        const sessionName = agent.session || agent.agentId;
-        const entry = connectPane(sessionName, `${agent.agentId} (${agent.role || 'worker'})`);
-        updatePaneMetadata(entry, agent);
-      });
-    refitTerminal();
-  }
-
   async function loadTeamState(options = {}) {
-    const [rosterResponse, messagesResponse] = await Promise.all([
+    const [rosterResponse, messagesResponse, tasksResponse] = await Promise.all([
       fetch('/api/team/roster'),
-      fetch('/api/team/messages')
+      fetch('/api/team/messages'),
+      fetch('/api/team/tasks')
     ]);
     const rosterBody = await rosterResponse.json();
     const messagesBody = await messagesResponse.json();
+    const tasksBody = await tasksResponse.json();
     if (!rosterResponse.ok) {
       setTeamStatus(rosterBody.error || `roster ${rosterResponse.status}`, 'error');
       return;
     }
     if (!messagesResponse.ok) {
       setTeamStatus(messagesBody.error || `messages ${messagesResponse.status}`, 'error');
+      return;
+    }
+    if (!tasksResponse.ok) {
+      setTeamStatus(tasksBody.error || `tasks ${tasksResponse.status}`, 'error');
       return;
     }
 
@@ -538,14 +674,18 @@
         agent.workspace?.status,
         agent.workspace?.path
       ]),
-      messages: messagesBody.messages.map((message) => [message.messageId, message.status])
+      messages: messagesBody.messages.map((message) => [message.messageId, message.status]),
+      tasks: tasksBody.tasks.map((task) => [task.taskId, task.status, task.result])
     });
     if (signature === lastTeamSignature && options.silent) {
       return;
     }
     teamRoster.replaceChildren(...rosterBody.roster.map(renderTeamAgent));
     teamMessages.replaceChildren(...messagesBody.messages.slice(-6).map(renderTeamMessage));
-    syncAgentPanes(rosterBody.roster);
+    renderAgentCards(rosterBody.roster, {
+      messages: messagesBody.messages,
+      tasks: tasksBody.tasks.slice().reverse()
+    });
     lastTeamSignature = signature;
     setTeamStatus(`${rosterBody.roster.filter((agent) => agent.status !== 'removed').length} agents`, 'ok');
     await Promise.all([
