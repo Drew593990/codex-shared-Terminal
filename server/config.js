@@ -32,14 +32,36 @@ function readProjectAgentProfiles(cwd) {
   return profiles;
 }
 
+function wrapWindowsCommand(command, args = []) {
+  if (process.platform !== 'win32') {
+    return { command, args };
+  }
+  if (/\.exe$/i.test(command)) {
+    return { command, args };
+  }
+  return {
+    command: 'cmd.exe',
+    args: ['/d', '/s', '/c', command, ...args]
+  };
+}
+
 function loadConfig(env = process.env) {
   const dataDir = env.SHARETERMINAL_DATA_DIR || path.join(ROOT_DIR, 'data');
   const cwd = env.SHARETERMINAL_CWD || ROOT_DIR;
   const npmGlobalDir = env.SHARETERMINAL_NPM_GLOBAL_DIR || '';
   const opencodeCommand = env.SHARETERMINAL_OPENCODE_COMMAND ||
-    (npmGlobalDir ? path.join(npmGlobalDir, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe') : 'opencode');
+    (npmGlobalDir ? path.join(npmGlobalDir, 'opencode.cmd') : 'opencode');
   const claudeCommand = env.SHARETERMINAL_CLAUDE_COMMAND ||
-    (npmGlobalDir ? path.join(npmGlobalDir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe') : 'claude');
+    (npmGlobalDir ? path.join(npmGlobalDir, 'claude.cmd') : 'claude');
+  const opencodeDirect = wrapWindowsCommand(opencodeCommand, [
+    'run',
+    '--pure',
+    '--format',
+    'json',
+    '--title',
+    'shareterminal-direct'
+  ]);
+  const claudeDirect = wrapWindowsCommand(claudeCommand, ['-p']);
 
   const builtInAgentProfiles = {
     echo: {
@@ -49,8 +71,8 @@ function loadConfig(env = process.env) {
     opencode: {
       label: 'opencode',
       mode: 'command',
-      command: opencodeCommand,
-      args: ['run', '--pure', '--format', 'json', '--title', 'shareterminal-direct'],
+      command: opencodeDirect.command,
+      args: opencodeDirect.args,
       cwd,
       promptMode: 'arg',
       sessionArg: '--session',
@@ -62,8 +84,8 @@ function loadConfig(env = process.env) {
     claude: {
       label: 'Claude Code',
       mode: 'command',
-      command: claudeCommand,
-      args: ['-p'],
+      command: claudeDirect.command,
+      args: claudeDirect.args,
       cwd,
       promptMode: 'arg',
       responseFormat: 'text'

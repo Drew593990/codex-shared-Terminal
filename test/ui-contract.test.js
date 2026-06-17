@@ -31,6 +31,9 @@ test('browser UI exposes team task and trace surfaces', async () => {
   assert.match(app, /renderAgentTaskActions/);
   assert.match(app, /agent-card-task-actions/);
   assert.match(app, /cardActionContext/);
+  assert.match(app, /taskTargetsAgent/);
+  assert.match(app, /task\.assignedTo === '@leader'/);
+  assert.doesNotMatch(app, /task\.mentions[\s\S]{0,120}\.includes\(`@\$\{agentId\}`\)/);
   assert.match(app, /shareterminal\.showRemovedAgents/);
   assert.match(app, /renderRemovedAgentCard/);
   assert.match(app, /renderTeamFlow/);

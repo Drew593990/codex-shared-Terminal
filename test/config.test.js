@@ -25,11 +25,12 @@ test('loadConfig defines direct agent profiles and conversation storage', () => 
   assert.equal(config.conversationDir, 'X:\\workspace\\shareterminal\\data\\conversations');
   assert.equal(config.teamDir, 'X:\\workspace\\shareterminal\\data\\team');
   assert.equal(config.agentProfiles.echo.mode, 'echo');
-  assert.equal(
-    config.agentProfiles.opencode.command,
-    'opencode'
-  );
+  assert.equal(config.agentProfiles.opencode.command, 'cmd.exe');
   assert.deepEqual(config.agentProfiles.opencode.args, [
+    '/d',
+    '/s',
+    '/c',
+    'opencode',
     'run',
     '--pure',
     '--format',
@@ -42,11 +43,8 @@ test('loadConfig defines direct agent profiles and conversation storage', () => 
   assert.equal(config.agentProfiles.opencode.responseFormat, 'opencode-json');
   assert.equal(config.agentProfiles.opencode.usePty, true);
   assert.equal(config.agentProfiles.opencode.cols, 10000);
-  assert.equal(
-    config.agentProfiles.claude.command,
-    'claude'
-  );
-  assert.deepEqual(config.agentProfiles.claude.args, ['-p']);
+  assert.equal(config.agentProfiles.claude.command, 'cmd.exe');
+  assert.deepEqual(config.agentProfiles.claude.args, ['/d', '/s', '/c', 'claude', '-p']);
   assert.equal(config.agentProfiles.claude.promptMode, 'arg');
 });
 
@@ -71,12 +69,24 @@ test('loadConfig can resolve direct CLIs from an explicit npm global directory',
 
   assert.equal(
     config.agentProfiles.opencode.command,
-    'X:\\tools\\npm-global\\node_modules\\opencode-ai\\bin\\opencode.exe'
+    'cmd.exe'
   );
+  assert.deepEqual(config.agentProfiles.opencode.args.slice(0, 4), [
+    '/d',
+    '/s',
+    '/c',
+    'X:\\tools\\npm-global\\opencode.cmd'
+  ]);
   assert.equal(
     config.agentProfiles.claude.command,
-    'X:\\tools\\npm-global\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe'
+    'cmd.exe'
   );
+  assert.deepEqual(config.agentProfiles.claude.args.slice(0, 4), [
+    '/d',
+    '/s',
+    '/c',
+    'X:\\tools\\npm-global\\claude.cmd'
+  ]);
 });
 
 test('loadConfig merges project-local agent registry overrides', async () => {
@@ -107,7 +117,7 @@ test('loadConfig merges project-local agent registry overrides', async () => {
     });
 
     assert.equal(config.agentProfiles.opencode.enabled, false);
-    assert.equal(config.agentProfiles.opencode.command, 'opencode');
+    assert.equal(config.agentProfiles.opencode.command, 'cmd.exe');
     assert.equal(config.agentProfiles.researcher.label, 'Research Agent');
     assert.equal(config.agentProfiles.researcher.command, 'research-cli');
     assert.deepEqual(config.agentProfiles.researcher.capabilities, ['research']);

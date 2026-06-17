@@ -422,14 +422,28 @@
     return item;
   }
 
+  function taskTargetsAgent(task, agent) {
+    const agentId = agent.agentId;
+    if (!task || !agentId) {
+      return false;
+    }
+    if (task.assignedTo === agentId || task.assignedTo === `@${agentId}`) {
+      return true;
+    }
+    if (task.claimedBy === agentId || task.lastAttemptAgentId === agentId) {
+      return true;
+    }
+    if ((task.mentionRoutes || []).some((route) => route.agentId === agentId)) {
+      return true;
+    }
+    if ((task.assignedTo === '@leader' || task.assignedTo === '@team') && task.leaderAgentId === agentId) {
+      return true;
+    }
+    return false;
+  }
+
   function latestTaskForAgent(agent, tasks = []) {
-    return tasks.find((task) => (
-      task.assignedTo === agent.agentId ||
-      task.leaderAgentId === agent.agentId ||
-      task.claimedBy === agent.agentId ||
-      task.lastAttemptAgentId === agent.agentId ||
-      (task.mentionRoutes || []).some((route) => route.agentId === agent.agentId)
-    )) || null;
+    return tasks.find((task) => taskTargetsAgent(task, agent)) || null;
   }
 
   function latestMessageForAgent(agent, messages = []) {

@@ -54,6 +54,13 @@ Ensure-Agent -ProfileId "echo" -AgentId "echo1" -Role "leader"
 Ensure-Agent -ProfileId "echo" -AgentId "echo2" -Role "worker"
 Ensure-Agent -ProfileId "echo" -AgentId "echo3" -Role "worker"
 
+$leader = Invoke-JsonPost "$BaseUrl/api/team/roster/leader" @{
+  agentId = "echo1"
+}
+if ($leader.agent.agentId -ne "echo1" -or $leader.agent.role -ne "leader") {
+  throw "Expected echo1 to be the smoke leader."
+}
+
 $roster = Invoke-RestMethod -Uri "$BaseUrl/api/team/roster"
 $activeRoster = @($roster.roster | Where-Object { $_.status -ne "removed" })
 if ($activeRoster.Count -lt 3) {
@@ -71,6 +78,12 @@ $dispatch = Invoke-JsonPost "$BaseUrl/api/team/tasks/$($task.task.taskId)/dispat
 if ($dispatch.task.status -ne "completed") {
   throw "Expected completed task, got $($dispatch.task.status)."
 }
+if ($dispatch.task.leaderAgentId -ne "echo1") {
+  throw "Expected smoke task leader echo1, got $($dispatch.task.leaderAgentId)."
+}
+if ($dispatch.task.result -match "timed out") {
+  throw "Smoke task result should not come from a timed-out real CLI run."
+}
 
 $trace = Invoke-RestMethod -Uri "$BaseUrl/api/team/trace/$($task.task.taskId)"
 if (-not $trace.trace.events -or $trace.trace.events.Count -lt 1) {
@@ -81,6 +94,7 @@ $inbox = Invoke-RestMethod -Uri "$BaseUrl/api/team/inbox"
 [pscustomobject]@{
   ok = $true
   taskId = $dispatch.task.taskId
+  leaderAgentId = $dispatch.task.leaderAgentId
   rosterCount = $activeRoster.Count
   traceEvents = $trace.trace.events.Count
   inboxItems = $inbox.items.Count
